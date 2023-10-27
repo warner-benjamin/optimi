@@ -16,6 +16,21 @@ k = 20
 
 optimizers, any_optimizers = {}, {}
 
+optimizers["adam"] = ({'optim':torch.optim.Adam, 'kwargs':dict(lr=1e-3, betas=(0.9, 0.99), eps=1e-6)},
+                      {'optim':optimi.Adam, 'kwargs':dict(lr=1e-3, weight_decay=0)})
+
+optimizers["adam_l2"] = ({'optim':torch.optim.Adam, 'kwargs':dict(lr=1e-3, betas=(0.9, 0.99), eps=1e-6, weight_decay=1e-2)},
+                         {'optim':optimi.Adam, 'kwargs':dict(lr=1e-3, weight_decay=1e-2, decouple_wd=False)})
+
+optimizers["adam_dw"] = ({'optim':torch.optim.AdamW, 'kwargs':dict(lr=1e-3, betas=(0.9, 0.99), eps=1e-6, weight_decay=1e-2)},
+                         {'optim':optimi.Adam, 'kwargs':dict(lr=1e-3, weight_decay=1e-2, decouple_wd=True)})
+
+optimizers["adamw"] = ({'optim':torch.optim.AdamW, 'kwargs':dict(lr=1e-3, betas=(0.9, 0.99), eps=1e-6, weight_decay=1e-2)},
+                       {'optim':optimi.AdamW, 'kwargs':dict(lr=1e-3, weight_decay=1e-2)})
+
+optimizers["adamw_dlr"] = ({'optim':reference.DecoupledAdamW, 'kwargs':dict(lr=1e-3, betas=(0.9, 0.99), eps=1e-6, weight_decay=1e-5)},
+                           {'optim':optimi.AdamW, 'kwargs':dict(lr=1e-3, weight_decay=1e-5, decouple_lr=True)})
+
 optimizers["sgd"] = ({'optim':torch.optim.SGD, 'kwargs':dict(lr=1e-3)},
                      {'optim':optimi.SGD, 'kwargs':dict(lr=1e-3)})
 
@@ -30,6 +45,9 @@ optimizers["sgd_l2"] = ({'optim':torch.optim.SGD, 'kwargs':dict(lr=1e-3, momentu
 
 optimizers["sgdw_dlr"] = ({'optim':reference.DecoupledSGDW, 'kwargs':dict(lr=1e-3, momentum=0.9, dampening=0.9, weight_decay=1e-5)},
                           {'optim':optimi.SGD, 'kwargs':dict(lr=1e-3, momentum=0.9, dampening=True, torch_init=True, decouple_lr=True, weight_decay=1e-5)})
+
+any_optimizers["any_adamw"] = ({'optim':reference.AnyPrecisionAdamW, 'kwargs':dict(lr=1e-3, betas=(0.9, 0.99), eps=1e-6, weight_decay=1e-2)},
+                               {'optim':optimi.Adam, 'kwargs':dict(lr=1e-3, weight_decay=1e-2, decouple_wd=True, kahan_sum=True)})
 
 
 def assert_most_approx_close(a, b, rtol=1e-3, atol=1e-3, max_error_count=0, max_error_rate=None):
@@ -144,6 +162,18 @@ def test_optimizer_cpu(dim1:int, dim2:int, gtype:torch.dtype, optim_name:str, ft
     run_optimizer(dim1, dim2, gtype, optim_name, ftype, torch.device('cpu'), buffer)
 
 
+optimizer_names = [key for key in any_optimizers.keys()]
+cpu_gtype = [torch.bfloat16]
+cpu_values = list(product(cpu_dim1, cpu_dim2, cpu_gtype, optimizer_names, cpu_ftype))
+cpu_names = ["dim1_{}_dim2_{}_gtype_{}_optim_{}{}".format(*vals) for vals in cpu_values]
+
+@pytest.mark.cpu
+@pytest.mark.parametrize("dim1, dim2, gtype, optim_name, ftype", cpu_values, ids=cpu_names)
+def test_anyoptimizer_cpu(dim1:int, dim2:int, gtype:torch.dtype, optim_name:str, ftype:str):
+    ftype = ftype.replace('_', '')
+    run_optimizer(dim1, dim2, gtype, optim_name, ftype, torch.device('cpu'), buffer, True)
+
+
 optimizer_names = [key for key in optimizers.keys()]
 cuda_dim1 = [1024]
 cuda_dim2 = [64, 1024, 4097, 1]
@@ -157,3 +187,15 @@ cuda_names = ["dim1_{}_dim2_{}_gtype_{}_optim_{}{}".format(*vals) for vals in cu
 def test_optimizer_cuda(dim1:int, dim2:int, gtype:torch.dtype, optim_name:str, ftype:str):
     ftype = ftype.replace('_', '')
     run_optimizer(dim1, dim2, gtype, optim_name, ftype, torch.device('cuda'), buffer)
+
+
+optimizer_names = [key for key in any_optimizers.keys()]
+cuda_gtype = [torch.bfloat16]
+cuda_values = list(product(cuda_dim1, cuda_dim2, cuda_gtype, optimizer_names, cuda_ftype))
+cuda_names = ["dim1_{}_dim2_{}_gtype_{}_optim_{}{}".format(*vals) for vals in cuda_values]
+
+@pytest.mark.cuda
+@pytest.mark.parametrize("dim1, dim2, gtype, optim_name, ftype", cuda_values, ids=cuda_names)
+def test_anyoptimizer_cuda(dim1:int, dim2:int, gtype:torch.dtype, optim_name:str, ftype:str):
+    ftype = ftype.replace('_', '')
+    run_optimizer(dim1, dim2, gtype, optim_name, ftype, torch.device('cuda'), buffer, True)

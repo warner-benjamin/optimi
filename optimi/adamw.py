@@ -1,0 +1,125 @@
+# Copyright (c) 2023 Benjamin Warner
+# SPDX-License-Identifier: MIT
+
+# Based on PyTorch Optimizers
+# PyTorch - PyTorch BSD-style license - Copyright (c) 2013-present PyTorch contributors
+
+# Kahan summation inspired by Torch Distributed Experimental's `AnyPrecisionAdamW`
+# torchdistX - BSD 3-Clause License - Copyright (c) Meta Platforms, Inc. and affiliates
+
+# Learning rate decoupled weight decay inspired by Composer's `DecoupledSGDW` & `DecoupledAdamW`
+# Composer - Apache License 2.0 - Copyright (c) 2022 MosaicML Composer authors
+
+from __future__ import annotations
+
+from typing import Iterable
+
+from torch import Tensor
+from torch.optim.optimizer import required
+
+from optimi import Adam, adam
+
+__all__ = ["AdamW", "adamw"]
+
+
+class AdamW(Adam):
+    """AdamW optimizer: Adam with decoupled weight decay.
+
+    Args:
+        params (iterable): Iterable of parameters to optimize or dicts defining parameter groups
+        lr (float): Default learning rate
+        betas (tuple[float, float]): Coefficents for gradient and squared gradient moving averages
+            (default: (0.9, 0.99))
+        weight_decay (float): Weight decay coefficient. If `decouple_lr` is False, applies decoupled
+            weight decay (default: 1e-2)
+        eps (float): Added to denominator to improve numerical stability (default: 1e-6)
+        decouple_lr (bool): Apply learning rate decoupled weight decay instead of decoupled weight
+            decay (default: False)
+        kahan_sum (bool, optional): Enables kahan summation for more accurate parameter updates when
+            training in low precision (float16 or bfloat16). If unspecified, automatically applies
+            for low precision parameters (default: None)
+        foreach (bool, optional): Enables the foreach implementation. If unspecified, tries to use
+            foreach over for-loop implementation since it is significantly faster (default: None)
+    """
+
+    def __init__(
+        self,
+        params: Iterable[Tensor] | Iterable[dict],
+        lr: float = required,  # type: ignore
+        betas: tuple[float, float] = (0.9, 0.99),
+        weight_decay: float = 1e-2,
+        eps: float = 1e-6,
+        decouple_lr: bool = False,
+        kahan_sum: bool | None = None,
+        foreach: bool | None = None,
+    ):
+        super().__init__(
+            params=params,
+            lr=lr,
+            betas=betas,
+            weight_decay=weight_decay,
+            eps=eps,
+            decouple_wd=True,
+            decouple_lr=decouple_lr,
+            kahan_sum=kahan_sum,
+            foreach=foreach,
+        )
+
+
+def adamw(
+    params: list[Tensor],
+    grads: list[Tensor],
+    exp_avgs: list[Tensor],
+    exp_avg_sqs: list[Tensor],
+    kahan_comps: list[Tensor | None] | None = None,
+    *,
+    lr: float,
+    beta1: float,
+    beta2: float,
+    weight_decay: float,
+    eps: float,
+    step: Tensor,
+    decouple_lr: bool = False,
+    initial_lr: float | None = None,
+    kahan_sum: bool = False,
+    foreach: bool = False,
+):
+    """Functional API to apply an AdamW optimization step.
+
+    See `optimi.AdamW` for more details.
+
+    Args:
+        params (list): Parameters to update
+        grads (list): Parameter gradients
+        exp_avgs (list): Gradient moving averages
+        exp_avg_sqs (list): Squared gradient moving averages
+        kahan_comps (list, optional): Kahan summation compensations
+        lr (float): Learning rate
+        beta1 (float): Gradient moving average factor
+        beta2 (float): Squared gradient moving average factor
+        weight_decay (float): Weight decay coefficient
+        eps (float): Added to denominator to improve numerical stability
+        step (tensor): Step counter used for bias correction
+        decouple_lr (bool): Apply learning rate decoupled weight decay
+        initial_lr (float, optional): Initial learning rate for `decouple_lr`
+        kahan_sum (bool): Enables kahan summation for low precision `params`
+        foreach (bool): Enables the faster foreach implementation
+    """
+    adam(
+        params=params,
+        grads=grads,
+        exp_avgs=exp_avgs,
+        exp_avg_sqs=exp_avg_sqs,
+        kahan_comps=kahan_comps,
+        lr=lr,
+        beta1=beta1,
+        beta2=beta2,
+        weight_decay=weight_decay,
+        eps=eps,
+        step=step,
+        decouple_wd=True,
+        decouple_lr=decouple_lr,
+        initial_lr=initial_lr,
+        kahan_sum=kahan_sum,
+        foreach=foreach,
+    )
