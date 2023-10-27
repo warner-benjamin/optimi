@@ -47,6 +47,7 @@ src = ["optimi"]
 
 [tool.ruff.extend-per-file-ignores]
 "__init__.py" = ["D104", "F401", "I002"]
+"utils.py" = ["I002"]
 
 [tool.ruff.format]
 exclude = ["tests", "docs"]
