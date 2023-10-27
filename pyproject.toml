@@ -46,7 +46,7 @@ extend-exclude = ["tests", "docs"]
 src = ["optimi"]
 
 [tool.ruff.extend-per-file-ignores]
-"__init__.py" = ["F401", "D104"]
+"__init__.py" = ["D104", "F401", "I002"]
 
 [tool.ruff.format]
 exclude = ["tests", "docs"]
