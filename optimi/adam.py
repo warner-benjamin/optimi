@@ -38,6 +38,8 @@ class Adam(Optimizer):
         decouple_wd (bool): Apply decoupled weight decay instead of L2 penalty (default: False)
         decouple_lr (bool): Apply learning rate decoupled weight decay instead of L2 penalty
             (default: False)
+        max_lr (float, optional): Maximum scheduled learning rate. Set if `lr` is not the maximum
+            scheduled learning rate and `decouple_lr` is True.
         kahan_sum (bool, optional): Enables kahan summation for more accurate parameter updates when
             training in low precision (float16 or bfloat16). If unspecified, automatically applies
             for low precision parameters (default: None)
@@ -54,6 +56,7 @@ class Adam(Optimizer):
         eps: float = 1e-6,
         decouple_wd: bool = False,
         decouple_lr: bool = False,
+        max_lr: float | None = None,
         foreach: bool | None = None,
         kahan_sum: bool | None = None,
     ):
@@ -67,6 +70,8 @@ class Adam(Optimizer):
             raise ValueError(f"Invalid beta2 parameter: {betas[1]=}")
         if not 0.0 <= weight_decay:
             raise ValueError(f"Invalid weight decay: {weight_decay=}")
+        if decouple_lr and max_lr is None:
+            max_lr = lr
 
         defaults = dict(
             lr=lr,
@@ -76,6 +81,7 @@ class Adam(Optimizer):
             weight_decay=weight_decay,
             decouple_wd=decouple_wd,
             decouple_lr=decouple_lr,
+            max_lr=max_lr,
             foreach=foreach,
             kahan_sum=kahan_sum,
             setup=False,
@@ -117,7 +123,6 @@ class Adam(Optimizer):
         if not group["setup"]:
             group["setup"] = True
             group["step"] = torch.tensor(0, dtype=torch.int32)
-            group.setdefault("initial_lr", group["lr"])
 
             if group["foreach"] is None:
                 _, group["foreach"] = _default_to_fused_or_foreach(params, False, False)
@@ -152,7 +157,7 @@ class Adam(Optimizer):
                 step=group["step"],
                 decouple_wd=group["decouple_wd"],
                 decouple_lr=group["decouple_lr"],
-                initial_lr=group["initial_lr"],
+                max_lr=group["max_lr"],
                 kahan_sum=group["kahan_sum"],
                 foreach=group["foreach"],
             )
@@ -175,7 +180,7 @@ def adam(
     step: Tensor,
     decouple_wd: bool,
     decouple_lr: bool = False,
-    initial_lr: float | None = None,
+    max_lr: float | None = None,
     kahan_sum: bool = False,
     foreach: bool = False,
 ):
@@ -197,7 +202,7 @@ def adam(
         step (tensor): Step counter used for bias correction
         decouple_wd (bool): Apply decoupled weight decay
         decouple_lr (bool): Apply learning rate decoupled weight decay
-        initial_lr (float, optional): Initial learning rate for `decouple_lr`
+        max_lr (float, optional): Maximum scheduled learning ratefor `decouple_lr`
         kahan_sum (bool): Enables kahan summation for low precision parameters
         foreach (bool): Enables the faster foreach implementation
     """
@@ -209,7 +214,7 @@ def adam(
     # calculate decoupled weight decay or learning rate decoupled weight decay
     if weight_decay != 0:
         if decouple_lr:
-            weight_decay = 1 - (lr / initial_lr) * weight_decay
+            weight_decay = 1 - (lr / max_lr) * weight_decay
         elif decouple_wd:
             weight_decay = 1 - lr * weight_decay
 
@@ -242,7 +247,7 @@ def _single_adam(
     grads: list[Tensor],
     exp_avgs: list[Tensor],
     exp_avg_sqs: list[Tensor],
-    kahan_comps: list[Tensor | None] = None,
+    kahan_comps: list[Tensor | None],
     *,
     lr: float,
     beta1_comp: float,
@@ -290,7 +295,7 @@ def _foreach_adam(
     grads: list[Tensor],
     exp_avgs: list[Tensor],
     exp_avg_sqs: list[Tensor],
-    kahan_comps: list[Tensor | None] | None = None,
+    kahan_comps: list[Tensor | None],
     *,
     lr: float,
     beta1_comp: float,

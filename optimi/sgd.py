@@ -39,6 +39,8 @@ class SGD(Optimizer):
         decouple_wd (bool): Apply decoupled weight decay instead of L2 penalty (default: False)
         decouple_lr (bool): Apply learning rate decoupled weight decay instead of L2 penalty
             (default: False)
+        max_lr (float, optional): Maximum scheduled learning rate. Set if `lr` is not the maximum
+            scheduled learning rate and `decouple_lr` is True.
         torch_init (bool): Initialize momentum buffer with first gradient instead of zeroes. Enable
             to match PyTorch SGD when using dampening (default: False)
         kahan_sum (bool, optional): Enables kahan summation for more accurate parameter updates when
@@ -57,6 +59,7 @@ class SGD(Optimizer):
         dampening: bool = False,
         decouple_wd: bool = False,
         decouple_lr: bool = False,
+        max_lr: float | None = None,
         torch_init: bool = False,
         kahan_sum: bool | None = None,
         foreach: bool | None = None,
@@ -67,6 +70,8 @@ class SGD(Optimizer):
             raise ValueError(f"Invalid momentum: {momentum=}")
         if not 0.0 <= weight_decay:
             raise ValueError(f"Invalid weight decay: {weight_decay=}")
+        if decouple_lr and max_lr is None:
+            max_lr = lr
 
         defaults = dict(
             lr=lr,
@@ -75,6 +80,7 @@ class SGD(Optimizer):
             dampening=dampening,
             decouple_wd=decouple_wd,
             decouple_lr=decouple_lr,
+            max_lr=max_lr,
             kahan_sum=kahan_sum,
             torch_init=torch_init,
             foreach=foreach,
@@ -111,7 +117,6 @@ class SGD(Optimizer):
 
         if not group["setup"]:
             group["setup"] = True
-            group.setdefault("initial_lr", group["lr"])
 
             if group["foreach"] is None:
                 _, group["foreach"] = _default_to_fused_or_foreach(params, False, False)
@@ -143,7 +148,7 @@ class SGD(Optimizer):
                 dampening=group["dampening"],
                 decouple_wd=group["decouple_wd"],
                 decouple_lr=group["decouple_lr"],
-                initial_lr=group["initial_lr"],
+                max_lr=group["max_lr"],
                 kahan_sum=group["kahan_sum"],
                 foreach=group["foreach"],
             )
@@ -163,7 +168,7 @@ def sgd(
     dampening: bool,
     decouple_wd: bool,
     decouple_lr: bool = False,
-    initial_lr: float | None = None,
+    max_lr: float | None = None,
     kahan_sum: bool = False,
     foreach: bool = False,
 ):
@@ -182,14 +187,14 @@ def sgd(
         dampening (bool): Use dampening for momentum update
         decouple_wd (bool): Apply decoupled weight decay
         decouple_lr (bool): Apply learning rate decoupled weight decay
-        initial_lr (float, optional): Initial learning rate for `decouple_lr`
+        max_lr (float, optional): Maximum scheduled learning ratefor `decouple_lr`
         kahan_sum (bool): Enables kahan summation for low precision `params`
         foreach (bool): Enables the faster foreach implementation
     """
     # calculate decoupled weight decay or learning rate decoupled weight decay
     if weight_decay != 0:
         if decouple_lr:
-            weight_decay = 1 - (lr / initial_lr) * weight_decay
+            weight_decay = 1 - (lr / max_lr) * weight_decay
         elif decouple_wd:
             weight_decay = 1 - lr * weight_decay
 
@@ -219,7 +224,7 @@ def _single_sgd(
     params: list[Tensor],
     grads: list[Tensor],
     exp_avgs: list[Tensor | None],
-    kahan_comps: list[Tensor | None] = None,
+    kahan_comps: list[Tensor | None],
     *,
     lr: float,
     momentum: float,
@@ -282,7 +287,7 @@ def _foreach_sgd(
     params: list[Tensor],
     grads: list[Tensor],
     exp_avgs: list[Tensor | None],
-    kahan_comps: list[Tensor | None] = None,
+    kahan_comps: list[Tensor | None],
     *,
     lr: float,
     momentum: float,

@@ -35,6 +35,8 @@ class AdamW(Adam):
         eps (float): Added to denominator to improve numerical stability (default: 1e-6)
         decouple_lr (bool): Apply learning rate decoupled weight decay instead of decoupled weight
             decay (default: False)
+        max_lr (float, optional): Maximum scheduled learning rate. Set if `lr` is not the maximum
+            scheduled learning rate and `decouple_lr` is True.
         kahan_sum (bool, optional): Enables kahan summation for more accurate parameter updates when
             training in low precision (float16 or bfloat16). If unspecified, automatically applies
             for low precision parameters (default: None)
@@ -50,6 +52,7 @@ class AdamW(Adam):
         weight_decay: float = 1e-2,
         eps: float = 1e-6,
         decouple_lr: bool = False,
+        max_lr: float | None = None,
         kahan_sum: bool | None = None,
         foreach: bool | None = None,
     ):
@@ -61,6 +64,7 @@ class AdamW(Adam):
             eps=eps,
             decouple_wd=True,
             decouple_lr=decouple_lr,
+            max_lr=max_lr,
             kahan_sum=kahan_sum,
             foreach=foreach,
         )
@@ -80,7 +84,7 @@ def adamw(
     eps: float,
     step: Tensor,
     decouple_lr: bool = False,
-    initial_lr: float | None = None,
+    max_lr: float | None = None,
     kahan_sum: bool = False,
     foreach: bool = False,
 ):
@@ -101,7 +105,7 @@ def adamw(
         eps (float): Added to denominator to improve numerical stability
         step (tensor): Step counter used for bias correction
         decouple_lr (bool): Apply learning rate decoupled weight decay
-        initial_lr (float, optional): Initial learning rate for `decouple_lr`
+        max_lr (float, optional): Maximum scheduled learning ratefor `decouple_lr`
         kahan_sum (bool): Enables kahan summation for low precision `params`
         foreach (bool): Enables the faster foreach implementation
     """
@@ -119,7 +123,7 @@ def adamw(
         step=step,
         decouple_wd=True,
         decouple_lr=decouple_lr,
-        initial_lr=initial_lr,
+        max_lr=max_lr,
         kahan_sum=kahan_sum,
         foreach=foreach,
     )
