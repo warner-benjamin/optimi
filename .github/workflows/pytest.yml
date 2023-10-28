@@ -53,14 +53,14 @@ jobs:
         run: |
           REPORT="$(mktemp)"
           echo "report-path=$REPORT" >> $GITHUB_OUTPUT
-          pytest -v -m cpu --md=$REPORT'
+          pytest -v -m cpu --md=$REPORT
 
       # Modified from https://github.com/pavelzw/pytest-action, MIT License
       - name: Add report to summary
         run: |
           echo "::group::..."
           FINAL_REPORT="$(mktemp)"
-          echo "# pytest Report" > "$FINAL_REPORT"
+          echo "# Pytest Report" > "$FINAL_REPORT"
           echo "<details><summary>Click to expand!</summary>" >> "$FINAL_REPORT"
           tail -n+2 "${{ steps.pytest.outputs.report-path }}" >> "$FINAL_REPORT"
           echo "</details>" >> "$FINAL_REPORT"
