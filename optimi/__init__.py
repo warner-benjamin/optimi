@@ -5,3 +5,4 @@ __version__ = version(__package__)
 from .adam import Adam, adam
 from .adamw import AdamW, adamw
 from .sgd import SGD, sgd
+from .stableadamw import StableAdamW, stableadamw
