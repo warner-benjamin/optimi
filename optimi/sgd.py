@@ -187,7 +187,7 @@ def sgd(
         dampening (bool): Use dampening for momentum update
         decouple_wd (bool): Apply decoupled weight decay
         decouple_lr (bool): Apply learning rate decoupled weight decay
-        max_lr (float, optional): Maximum scheduled learning ratefor `decouple_lr`
+        max_lr (float, optional): Maximum scheduled learning rate for `decouple_lr`
         kahan_sum (bool): Enables kahan summation for low precision `params`
         foreach (bool): Enables the faster foreach implementation
     """
@@ -262,7 +262,6 @@ def _single_sgd(
 
                 # save error back to kahan compensation for next iteration
                 kahan_comp.add_(grad.sub_(param))
-
             else:
                 # SGD with Momentum step
                 param.add_(exp_avg, alpha=-lr)
@@ -277,7 +276,6 @@ def _single_sgd(
 
                 # save error back to kahan compensation for next iteration
                 kahan_comp.add_(grad.sub_(param))
-
             else:
                 # SGD step
                 param.add_(grad, alpha=-lr)

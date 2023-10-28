@@ -105,7 +105,7 @@ def adamw(
         eps (float): Added to denominator to improve numerical stability
         step (tensor): Step counter used for bias correction
         decouple_lr (bool): Apply learning rate decoupled weight decay
-        max_lr (float, optional): Maximum scheduled learning ratefor `decouple_lr`
+        max_lr (float, optional): Maximum scheduled learning rate for `decouple_lr`
         kahan_sum (bool): Enables kahan summation for low precision `params`
         foreach (bool): Enables the faster foreach implementation
     """

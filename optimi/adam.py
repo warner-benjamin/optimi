@@ -202,7 +202,7 @@ def adam(
         step (tensor): Step counter used for bias correction
         decouple_wd (bool): Apply decoupled weight decay
         decouple_lr (bool): Apply learning rate decoupled weight decay
-        max_lr (float, optional): Maximum scheduled learning ratefor `decouple_lr`
+        max_lr (float, optional): Maximum scheduled learning rate for `decouple_lr`
         kahan_sum (bool): Enables kahan summation for low precision parameters
         foreach (bool): Enables the faster foreach implementation
     """
@@ -284,7 +284,6 @@ def _single_adam(
 
             # save error back to kahan compensation for next iteration
             kahan_comp.add_(grad.sub_(param))
-
         else:
             # Adam step
             param.addcdiv_(exp_avg, exp_avg_sq.sqrt().add_(eps), value=-lr)
