@@ -1,0 +1,72 @@
+name: CI
+on:
+  workflow_dispatch:
+  push:
+    paths: [ 'optimi/**', 'tests/**' ]
+  pull_request:
+    paths: [ 'optimi/**', 'tests/**' ]
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Python & Install Ruff
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+          architecture: 'x64'
+          cache: "pip"
+      - run: pip install ruff
+
+      - name: Ruff Check
+        id: ruff
+        run: ruff check --output-format=github .
+
+  test:
+    needs: lint
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        py: ['3.8', '3.9', '3.10', '3.11']
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ matrix.py }}
+          architecture: 'x64'
+          cache: "pip"
+          cache-dependency-path: pyproject.toml
+
+      - name: Install Library
+        run: |
+          pip install --upgrade pip
+          pip install -e .[test] --extra-index-url https://download.pytorch.org/whl/cpu
+
+      - name: Run Tests
+        id: pytest
+        run: |
+          REPORT="$(mktemp)"
+          echo "report-path=$REPORT" >> $GITHUB_OUTPUT
+          pytest -v -m cpu --md=$REPORT'
+
+      # Modified from https://github.com/pavelzw/pytest-action, MIT License
+      - name: Add report to summary
+        run: |
+          echo "::group::..."
+          FINAL_REPORT="$(mktemp)"
+          echo "# pytest Report" > "$FINAL_REPORT"
+          echo "<details><summary>Click to expand!</summary>" >> "$FINAL_REPORT"
+          tail -n+2 "${{ steps.pytest.outputs.report-path }}" >> "$FINAL_REPORT"
+          echo "</details>" >> "$FINAL_REPORT"
+          cat "$FINAL_REPORT" >> "$GITHUB_STEP_SUMMARY"
+          echo "::endgroup::"
+          echo
+          echo "====================================================================================="
+          echo Markdown summaries: "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          echo "====================================================================================="
