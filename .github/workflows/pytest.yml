@@ -7,28 +7,7 @@ on:
     paths: [ 'optimi/**', 'tests/**' ]
 
 jobs:
-  lint:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout Code
-        uses: actions/checkout@v4
-
-      - name: Set up Python & Install Ruff
-        uses: actions/setup-python@v4
-        with:
-          python-version: '3.11'
-          architecture: 'x64'
-          cache: "pip"
-      - run: pip install ruff
-
-      - name: Ruff Check
-        id: ruff
-        run: |
-          ruff check --output-format=github .
-          ruff format --check .
-
   test:
-    needs: lint
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -49,6 +28,12 @@ jobs:
         run: |
           pip install --upgrade pip
           pip install -e .[test] --extra-index-url https://download.pytorch.org/whl/cpu
+
+      - name: Ruff Check
+        id: ruff
+        run: |
+          ruff check --output-format=github .
+          ruff format --check .
 
       - name: Run Tests
         id: pytest
