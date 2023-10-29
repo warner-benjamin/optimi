@@ -32,8 +32,8 @@ test = ["pytest>=7.4.3", "pytest-md>=0.2.0"]
 requires = ["setuptools>=61.0.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
-[tool.setuptools.packages.find]
-where = ["optimi"]
+[tool.setuptools]
+packages = ["optimi"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
