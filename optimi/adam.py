@@ -13,13 +13,14 @@
 from __future__ import annotations
 
 from typing import Any, Callable, Iterable
+from warnings import warn
 
 import torch
 from torch import Tensor
 from torch.optim.optimizer import Optimizer, _default_to_fused_or_foreach, required
 from torch.utils._foreach_utils import _group_tensors_by_device_and_dtype
 
-from optimi.utils import debias_beta
+from optimi.utils import MIN_TORCH_2_1, debias_beta
 
 __all__ = ["Adam", "adam"]
 
@@ -57,21 +58,34 @@ class Adam(Optimizer):
         decouple_wd: bool = False,
         decouple_lr: bool = False,
         max_lr: float | None = None,
-        foreach: bool | None = None,
         kahan_sum: bool | None = None,
+        foreach: bool | None = None,
     ):
         if not 0.0 <= lr:
             raise ValueError(f"Invalid learning rate: {lr=}")
-        if not 0.0 <= eps:
-            raise ValueError(f"Invalid epsilon: {eps=}")
         if not 0.0 <= betas[0] < 1.0:
             raise ValueError(f"Invalid beta1 parameter: {betas[0]=}")
         if not 0.0 <= betas[1] < 1.0:
             raise ValueError(f"Invalid beta2 parameter: {betas[1]=}")
         if not 0.0 <= weight_decay:
             raise ValueError(f"Invalid weight decay: {weight_decay=}")
+        if not 0.0 <= eps:
+            raise ValueError(f"Invalid epsilon: {eps=}")
         if decouple_lr and max_lr is None:
             max_lr = lr
+        if max_lr is not None and not 0.0 <= max_lr:
+            raise ValueError(f"Invalid maximum learning rate: {max_lr=}")
+        if decouple_lr and weight_decay >= 1e-3:
+            warn(
+                f"You are using {weight_decay=} which is potentially high for {decouple_lr=}. Unlike decoupled weight "
+                f"decay, learning rate decoupled weight decay does not reduce weight decay by the learning rate.",
+                category=UserWarning,
+            )
+        if not MIN_TORCH_2_1:
+            if foreach:
+                raise ValueError(f"{foreach=} requires PyTorch 2.1 or later. Set foreach=False or upgrade PyTorch.")
+            else:
+                foreach = False
 
         defaults = dict(
             lr=lr,
@@ -82,8 +96,8 @@ class Adam(Optimizer):
             decouple_wd=decouple_wd,
             decouple_lr=decouple_lr,
             max_lr=max_lr,
-            foreach=foreach,
             kahan_sum=kahan_sum,
+            foreach=foreach,
             setup=False,
         )
         super().__init__(params, defaults)

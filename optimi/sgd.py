@@ -16,11 +16,14 @@
 from __future__ import annotations
 
 from typing import Any, Callable, Iterable
+from warnings import warn
 
 import torch
 from torch import Tensor
 from torch.optim.optimizer import Optimizer, _default_to_fused_or_foreach, required
 from torch.utils._foreach_utils import _group_tensors_by_device_and_dtype
+
+from optimi.utils import MIN_TORCH_2_1
 
 __all__ = ["SGD", "sgd"]
 
@@ -72,6 +75,19 @@ class SGD(Optimizer):
             raise ValueError(f"Invalid weight decay: {weight_decay=}")
         if decouple_lr and max_lr is None:
             max_lr = lr
+        if max_lr is not None and not 0.0 <= max_lr:
+            raise ValueError(f"Invalid maximum learning rate: {max_lr=}")
+        if decouple_lr and weight_decay >= 1e-3:
+            warn(
+                f"You are using {weight_decay=} which is potentially high for {decouple_lr=}. Unlike decoupled weight "
+                f"decay, learning rate decoupled weight decay does not reduce weight decay by the learning rate.",
+                category=UserWarning,
+            )
+        if not MIN_TORCH_2_1:
+            if foreach:
+                raise ValueError(f"{foreach=} requires PyTorch 2.1 or later. Set foreach=False or upgrade PyTorch.")
+            else:
+                foreach = False
 
         defaults = dict(
             lr=lr,
@@ -181,9 +197,9 @@ def sgd(
         grads (list): Parameter gradients
         exp_avgs (list): Momentum buffers
         kahan_comps (list, optional): Kahan summation compensations
-        weight_decay (float): Weight decay coefficient
         lr (float): Learning rate
         momentum (float): Momentum factor
+        weight_decay (float): Weight decay coefficient
         dampening (bool): Use dampening for momentum update
         decouple_wd (bool): Apply decoupled weight decay
         decouple_lr (bool): Apply learning rate decoupled weight decay
@@ -256,7 +272,7 @@ def _single_sgd(
                 # SGD with Momentum step
                 kahan_comp.add_(exp_avg, alpha=-lr)
 
-                # update weights with kahan compensation
+                # update weights with kahan compensation using grad as temp buffer
                 grad.copy_(param.detach())
                 param.add_(kahan_comp)
 

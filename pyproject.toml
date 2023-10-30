@@ -17,7 +17,7 @@ classifiers = [
     "Programming Language :: Python :: 3.11",
     'Topic :: Scientific/Engineering :: Artificial Intelligence'
 ]
-dependencies = ["torch>=1.13"]
+dependencies = ["torch>=1.13", "packaging>=21.3"]
 
 [project.optional-dependencies]
 dev = ["pytest>=7.4.3", "ruff>=0.1.3"]

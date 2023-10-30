@@ -13,11 +13,14 @@
 from __future__ import annotations
 
 from typing import Any, Callable, Iterable
+from warnings import warn
 
 import torch
 from torch import Tensor
 from torch.optim.optimizer import Optimizer, _default_to_fused_or_foreach, required
 from torch.utils._foreach_utils import _group_tensors_by_device_and_dtype
+
+from optimi.utils import MIN_TORCH_2_1
 
 __all__ = ["Lion", "lion"]
 
@@ -64,6 +67,19 @@ class Lion(Optimizer):
             raise ValueError(f"Invalid weight decay: {weight_decay=}")
         if decouple_lr and max_lr is None:
             max_lr = lr
+        if max_lr is not None and not 0.0 <= max_lr:
+            raise ValueError(f"Invalid maximum learning rate: {max_lr=}")
+        if decouple_lr and weight_decay >= 1e-3:
+            warn(
+                f"You are using {weight_decay=} which is potentially high for {decouple_lr=}. Unlike decoupled weight "
+                f"decay, learning rate decoupled weight decay does not reduce weight decay by the learning rate.",
+                category=UserWarning,
+            )
+        if not MIN_TORCH_2_1:
+            if foreach:
+                raise ValueError(f"{foreach=} requires PyTorch 2.1 or later. Set foreach=False or upgrade PyTorch.")
+            else:
+                foreach = False
 
         defaults = dict(
             lr=lr,
