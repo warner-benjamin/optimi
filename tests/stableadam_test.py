@@ -13,10 +13,13 @@ from tests.optimizer_test import buffer, run_optimizer, cpu_dim1, cpu_dim2, cpu_
 optimizers = {}
 
 optimizers["stableadam"] = ({'optim':reference.StableAdamWUnfused, 'kwargs':dict(lr=1e-3, betas=(0.9, 0.99), weight_decay=0, eps=1e-6)},
-                           {'optim':optimi.StableAdamW, 'kwargs':dict(lr=1e-3, weight_decay=0)})
+                            {'optim':optimi.StableAdamW, 'kwargs':dict(lr=1e-3, betas=(0.9, 0.99), weight_decay=0, eps=1e-6)})
 
 optimizers["stableadam_wd"] = ({'optim':reference.StableAdamWUnfused, 'kwargs':dict(lr=1e-3, betas=(0.9, 0.99), weight_decay=1e-2, eps=1e-6)},
-                               {'optim':optimi.StableAdamW, 'kwargs':dict(lr=1e-3, weight_decay=1e-2)})
+                               {'optim':optimi.StableAdamW, 'kwargs':dict(lr=1e-3, betas=(0.9, 0.99), weight_decay=1e-2, eps=1e-6)})
+
+optimizers["stableadam_dlr"] = ({'optim':reference.StableAdamWUnfused, 'kwargs':dict(lr=1e-3, betas=(0.9, 0.99), weight_decay=1e-2, eps=1e-6)},
+                                {'optim':optimi.StableAdamW, 'kwargs':dict(lr=1e-3, betas=(0.9, 0.99), weight_decay=1e-5, eps=1e-6, decouple_lr=True)})
 
 optimizer_names = [key for key in optimizers.keys()]
 

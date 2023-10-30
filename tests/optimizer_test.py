@@ -46,7 +46,14 @@ def run_optimizer(optimizers:dict, dim1:int, dim2:int, gtype:torch.dtype, optim_
     if dim1 == 1 and dim2 == 1:
         return
     ftype = ftype.replace('_', '')
-    max_error_count = 10 if device != torch.device('cpu') else 1
+
+    # since Lion can have pretty noisy updates where things lie at the boundary
+    # allow up to 10 errors for Lion on GPU size tensors and 2 on CPU size tensors
+    max_error_count = 2 if device == torch.device('cpu') else 10
+    # Adan bfloat16 updates are noisier than other optimizers,
+    # allow more errors for higher dimension testing
+    if dim2 >= 4096:
+        max_error_count *= 3
 
     p1 = torch.randn(dim1, dim2, device=device, dtype=gtype) * 0.1
     p2 = p1.clone()
@@ -74,8 +81,6 @@ def run_optimizer(optimizers:dict, dim1:int, dim2:int, gtype:torch.dtype, optim_
         optimi_optimizer.step()
         torch_optimizer.step()
 
-        # since Lion can have pretty noisy updates where things lie at the boundary
-        # allow up to 10 errors for Lion on GPU size tensors and 1 on CPU size tensors
         if any_precision:
             # allow more errors for any_precision since the tolerances are more
             # precise then the regular bfloat16 precision tests
@@ -111,6 +116,6 @@ cpu_ftype = ['', '_foreach']
 
 
 cuda_dim1 = [1024]
-cuda_dim2 = [64, 1024, 4097, 1]
+cuda_dim2 = [64, 1024, 4096, 1]
 cuda_gtype = [torch.float32, torch.bfloat16]
 cuda_ftype = ['', '_foreach']

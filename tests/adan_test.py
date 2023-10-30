@@ -21,6 +21,9 @@ optimizers["adan_wd"] = ({'optim':reference.Adan, 'kwargs':dict(lr=1e-3, betas=(
 optimizers["adan_awd"] = ({'optim':reference.Adan, 'kwargs':dict(lr=1e-3, betas=(0.98, 0.92, 0.99), eps=1e-6, weight_decay=2e-2, no_prox=True)},
                           {'optim':optimi.Adan, 'kwargs':dict(lr=1e-3, betas=(0.98, 0.92, 0.99), eps=1e-6, weight_decay=2e-2, adam_wd=True)})
 
+optimizers["adan_dlr"] = ({'optim':reference.Adan, 'kwargs':dict(lr=1e-3, betas=(0.98, 0.92, 0.99), eps=1e-6, weight_decay=2e-2)},
+                          {'optim':optimi.Adan, 'kwargs':dict(lr=1e-3, betas=(0.98, 0.92, 0.99), eps=1e-6, weight_decay=2e-5, decouple_lr=True)})
+
 optimizer_names = [key for key in optimizers.keys()]
 
 

@@ -12,20 +12,20 @@ from tests.optimizer_test import buffer, run_optimizer, cpu_dim1, cpu_dim2, cpu_
 
 optimizers = {}
 
-optimizers["adam"] = ({'optim':torch.optim.Adam, 'kwargs':dict(lr=1e-3, betas=(0.9, 0.99), eps=1e-6)},
-                      {'optim':optimi.Adam, 'kwargs':dict(lr=1e-3, weight_decay=0)})
+optimizers["adam"] = ({'optim':torch.optim.Adam, 'kwargs':dict(lr=1e-3, betas=(0.9, 0.99), eps=1e-6, weight_decay=0)},
+                      {'optim':optimi.Adam, 'kwargs':dict(lr=1e-3, betas=(0.9, 0.99), eps=1e-6, weight_decay=0)})
 
 optimizers["adam_l2"] = ({'optim':torch.optim.Adam, 'kwargs':dict(lr=1e-3, betas=(0.9, 0.99), eps=1e-6, weight_decay=1e-2)},
-                         {'optim':optimi.Adam, 'kwargs':dict(lr=1e-3, weight_decay=1e-2, decouple_wd=False)})
+                         {'optim':optimi.Adam, 'kwargs':dict(lr=1e-3, betas=(0.9, 0.99), eps=1e-6, weight_decay=1e-2, decouple_wd=False)})
 
 optimizers["adam_dw"] = ({'optim':torch.optim.AdamW, 'kwargs':dict(lr=1e-3, betas=(0.9, 0.99), eps=1e-6, weight_decay=1e-2)},
-                         {'optim':optimi.Adam, 'kwargs':dict(lr=1e-3, weight_decay=1e-2, decouple_wd=True)})
+                         {'optim':optimi.Adam, 'kwargs':dict(lr=1e-3, betas=(0.9, 0.99), eps=1e-6, weight_decay=1e-2, decouple_wd=True)})
 
 optimizers["adamw"] = ({'optim':torch.optim.AdamW, 'kwargs':dict(lr=1e-3, betas=(0.9, 0.99), eps=1e-6, weight_decay=1e-2)},
-                       {'optim':optimi.AdamW, 'kwargs':dict(lr=1e-3, weight_decay=1e-2)})
+                       {'optim':optimi.AdamW, 'kwargs':dict(lr=1e-3, betas=(0.9, 0.99), eps=1e-6, weight_decay=1e-2)})
 
 optimizers["adamw_dlr"] = ({'optim':reference.DecoupledAdamW, 'kwargs':dict(lr=1e-3, betas=(0.9, 0.99), eps=1e-6, weight_decay=1e-5)},
-                           {'optim':optimi.AdamW, 'kwargs':dict(lr=1e-3, weight_decay=1e-5, decouple_lr=True)})
+                           {'optim':optimi.AdamW, 'kwargs':dict(lr=1e-3, betas=(0.9, 0.99), eps=1e-6, weight_decay=1e-5, decouple_lr=True)})
 
 optimizer_names = [key for key in optimizers.keys()]
 

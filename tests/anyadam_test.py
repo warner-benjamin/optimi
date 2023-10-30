@@ -18,9 +18,8 @@ optimizers["any_adam"] = ({'optim':reference.AnyPrecisionAdamW, 'kwargs':dict(lr
 optimizers["any_adamw"] = ({'optim':reference.AnyPrecisionAdamW, 'kwargs':dict(lr=1e-3, betas=(0.9, 0.99), eps=1e-6, weight_decay=1e-2)},
                            {'optim':optimi.AdamW, 'kwargs':dict(lr=1e-3, betas=(0.9, 0.99), eps=1e-6, weight_decay=1e-2, kahan_sum=True)})
 
-# optimizers["any_adamw_torch"] = ({'optim':torch.optim.AdamW, 'kwargs':dict(lr=1e-3, betas=(0.9, 0.99), eps=1e-6, weight_decay=1e-2)},
-#                            {'optim':reference.AnyPrecisionAdamW, 'kwargs':dict(lr=1e-3, betas=(0.9, 0.99), eps=1e-6, weight_decay=1e-2)},
-#                            )
+optimizers["any_adamw_dlr"] = ({'optim':reference.AnyPrecisionAdamW, 'kwargs':dict(lr=1e-3, betas=(0.9, 0.99), eps=1e-6, weight_decay=1e-2)},
+                               {'optim':optimi.AdamW, 'kwargs':dict(lr=1e-3, betas=(0.9, 0.99), eps=1e-6, weight_decay=1e-5, decouple_lr=True, kahan_sum=True)})
 
 optimizer_names = [key for key in optimizers.keys()]
 

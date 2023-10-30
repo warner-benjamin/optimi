@@ -12,20 +12,20 @@ from tests.optimizer_test import buffer, run_optimizer, cpu_dim1, cpu_dim2, cpu_
 
 optimizers = {}
 
-optimizers["sgd"] = ({'optim':torch.optim.SGD, 'kwargs':dict(lr=1e-3)},
-                     {'optim':optimi.SGD, 'kwargs':dict(lr=1e-3)})
+optimizers["sgd"] = ({'optim':torch.optim.SGD, 'kwargs':dict(lr=1e-3, momentum=0, dampening=0, weight_decay=0)},
+                     {'optim':optimi.SGD, 'kwargs':dict(lr=1e-3, momentum=0, dampening=False, weight_decay=0)})
 
-optimizers["sgd_mom"] = ({'optim':torch.optim.SGD, 'kwargs':dict(lr=1e-3, momentum=0.9)},
-                         {'optim':optimi.SGD, 'kwargs':dict(lr=1e-3, momentum=0.9, dampening=False)})
+optimizers["sgd_mom"] = ({'optim':torch.optim.SGD, 'kwargs':dict(lr=1e-3, momentum=0.9, dampening=0, weight_decay=0)},
+                         {'optim':optimi.SGD, 'kwargs':dict(lr=1e-3, momentum=0.9, dampening=False, weight_decay=0)})
 
-optimizers["sgd_damp"] = ({'optim':torch.optim.SGD, 'kwargs':dict(lr=1e-3, momentum=0.9, dampening=0.9)},
-                          {'optim':optimi.SGD, 'kwargs':dict(lr=1e-3, momentum=0.9, dampening=True, torch_init=True)})
+optimizers["sgd_damp"] = ({'optim':torch.optim.SGD, 'kwargs':dict(lr=1e-3, momentum=0.9, dampening=0.9, weight_decay=0)},
+                          {'optim':optimi.SGD, 'kwargs':dict(lr=1e-3, momentum=0.9, dampening=True, weight_decay=0, torch_init=True)})
 
-optimizers["sgd_l2"] = ({'optim':torch.optim.SGD, 'kwargs':dict(lr=1e-3, momentum=0.9, weight_decay=1e-2)},
+optimizers["sgd_l2"] = ({'optim':torch.optim.SGD, 'kwargs':dict(lr=1e-3, momentum=0.9, dampening=0, weight_decay=1e-2)},
                         {'optim':optimi.SGD, 'kwargs':dict(lr=1e-3, momentum=0.9, dampening=False, weight_decay=1e-2, decouple_wd=False)})
 
 optimizers["sgdw_dlr"] = ({'optim':reference.DecoupledSGDW, 'kwargs':dict(lr=1e-3, momentum=0.9, dampening=0.9, weight_decay=1e-5)},
-                          {'optim':optimi.SGD, 'kwargs':dict(lr=1e-3, momentum=0.9, dampening=True, torch_init=True, decouple_lr=True, weight_decay=1e-5)})
+                          {'optim':optimi.SGD, 'kwargs':dict(lr=1e-3, momentum=0.9, dampening=True, decouple_lr=True, weight_decay=1e-5, torch_init=True)})
 
 optimizer_names = [key for key in optimizers.keys()]
 

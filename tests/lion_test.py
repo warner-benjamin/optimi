@@ -13,10 +13,13 @@ from tests.optimizer_test import buffer, run_optimizer, cpu_dim1, cpu_dim2, cpu_
 optimizers = {}
 
 optimizers["lion"] = ({'optim':reference.Lion, 'kwargs':dict(lr=1e-4, betas=(0.9, 0.99), weight_decay=0)},
-                     {'optim':optimi.Lion, 'kwargs':dict(lr=1e-4, betas=(0.9, 0.99), weight_decay=0)})
+                      {'optim':optimi.Lion, 'kwargs':dict(lr=1e-4, betas=(0.9, 0.99), weight_decay=0)})
 
 optimizers["lion_wd"] = ({'optim':reference.Lion, 'kwargs':dict(lr=1e-4, betas=(0.9, 0.99), weight_decay=0.1)},
                          {'optim':optimi.Lion, 'kwargs':dict(lr=1e-4, betas=(0.9, 0.99), weight_decay=0.1)})
+
+optimizers["lion_dlr"] = ({'optim':reference.Lion, 'kwargs':dict(lr=1e-4, betas=(0.9, 0.99), weight_decay=0.1)},
+                          {'optim':optimi.Lion, 'kwargs':dict(lr=1e-4, betas=(0.9, 0.99), weight_decay=1e-5, decouple_lr=True)})
 
 optimizer_names = [key for key in optimizers.keys()]
 
