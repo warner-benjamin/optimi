@@ -1,6 +1,6 @@
 [project]
 name = "optimi"
-version = "0.0.3"
+version = "0.0.4"
 authors = [{name = "Benjamin Warner", email = "me@benjaminwarner.dev"}]
 description = "Fast modern PyTorch Optimizers"
 readme = "README.md"
