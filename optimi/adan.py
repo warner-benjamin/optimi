@@ -406,13 +406,10 @@ def _foreach_adan(
         torch._foreach_copy_(dev_prev_grads, dev_grads)
         torch._foreach_mul_(dev_prev_grads, scalar=-1)
 
-        # delete local intermediates to save on memory or reuse for kahan compensation
-        if not do_kahan_sum:
-            del dev_grads
-
-        # adam denominator
-        root_exp_avg_sqs = torch._foreach_sqrt(dev_exp_avg_sqs)
-        torch._foreach_add_(root_exp_avg_sqs, eps)
+        # Adan denominator using dev_grads as a temp buffer
+        torch._foreach_copy_(dev_grads, dev_exp_avg_sqs)
+        torch._foreach_sqrt_(dev_grads)
+        torch._foreach_add_(dev_grads, eps)
 
         # Adam-style weight decay
         if adam_wd and weight_decay != 0:
@@ -420,8 +417,8 @@ def _foreach_adan(
 
         if do_kahan_sum:
             # Adan step
-            torch._foreach_addcdiv_(dev_kahan_comps, dev_exp_avgs, root_exp_avg_sqs, value=-lr)
-            torch._foreach_addcdiv_(dev_kahan_comps, dev_exp_avg_diffs, root_exp_avg_sqs, value=-lr * beta2)
+            torch._foreach_addcdiv_(dev_kahan_comps, dev_exp_avgs, dev_grads, value=-lr)
+            torch._foreach_addcdiv_(dev_kahan_comps, dev_exp_avg_diffs, dev_grads, value=-lr * beta2)
 
             # update weights with kahan compensation using dev_grads as temp buffer
             torch._foreach_copy_(dev_grads, dev_params)
@@ -432,8 +429,8 @@ def _foreach_adan(
             torch._foreach_add_(dev_kahan_comps, dev_grads, alpha=1)
         else:
             # Adan step
-            torch._foreach_addcdiv_(dev_params, dev_exp_avgs, root_exp_avg_sqs, value=-lr)
-            torch._foreach_addcdiv_(dev_params, dev_exp_avg_diffs, root_exp_avg_sqs, value=-lr * beta2)
+            torch._foreach_addcdiv_(dev_params, dev_exp_avgs, dev_grads, value=-lr)
+            torch._foreach_addcdiv_(dev_params, dev_exp_avg_diffs, dev_grads, value=-lr * beta2)
 
         # Adan-style weight decay
         if not adam_wd and weight_decay != 0:

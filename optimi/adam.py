@@ -334,17 +334,14 @@ def _foreach_adam(
         torch._foreach_mul_(dev_exp_avg_sqs, scalar=beta2_hat)
         torch._foreach_addcmul_(dev_exp_avg_sqs, dev_grads, dev_grads, value=1 - beta2_hat)
 
-        # delete local intermediates to save on memory or reuse for kahan compensation
-        if not do_kahan_sum:
-            del dev_grads
-
-        # adam denominator
-        root_exp_avg_sqs = torch._foreach_sqrt(dev_exp_avg_sqs)
-        torch._foreach_add_(root_exp_avg_sqs, eps)
+        # Adam denominator using dev_grads as a temp buffer
+        torch._foreach_copy_(dev_grads, dev_exp_avg_sqs)
+        torch._foreach_sqrt_(dev_grads)
+        torch._foreach_add_(dev_grads, eps)
 
         if do_kahan_sum:
             # Adam step
-            torch._foreach_addcdiv_(dev_kahan_comps, dev_exp_avgs, root_exp_avg_sqs, value=-lr)
+            torch._foreach_addcdiv_(dev_kahan_comps, dev_exp_avgs, dev_grads, value=-lr)
 
             # update weights with kahan compensation using dev_grads as temp buffer
             torch._foreach_copy_(dev_grads, dev_params)
@@ -355,4 +352,4 @@ def _foreach_adam(
             torch._foreach_add_(dev_kahan_comps, dev_grads, alpha=1)
         else:
             # Adam step
-            torch._foreach_addcdiv_(dev_params, dev_exp_avgs, root_exp_avg_sqs, value=-lr)
+            torch._foreach_addcdiv_(dev_params, dev_exp_avgs, dev_grads, value=-lr)
