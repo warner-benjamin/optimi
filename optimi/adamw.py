@@ -15,7 +15,6 @@ from __future__ import annotations
 from typing import Iterable
 
 from torch import Tensor
-from torch.optim.optimizer import required
 
 from optimi import Adam, adam
 
@@ -26,28 +25,27 @@ class AdamW(Adam):
     """AdamW optimizer: Adam with decoupled weight decay.
 
     Args:
-        params (iterable): Iterable of parameters to optimize or dicts defining parameter groups
-        lr (float): Default learning rate
-        betas (tuple[float, float]): Coefficents for gradient and squared gradient moving averages
-            (default: (0.9, 0.99))
-        weight_decay (float): Weight decay coefficient. If `decouple_lr` is False, applies decoupled
-            weight decay (default: 1e-2)
-        eps (float): Added to denominator to improve numerical stability (default: 1e-6)
-        decouple_lr (bool): Apply learning rate decoupled weight decay instead of decoupled weight
-            decay (default: False)
-        max_lr (float, optional): Maximum scheduled learning rate. Set if `lr` is not the maximum
-            scheduled learning rate and `decouple_lr` is True.
-        kahan_sum (bool, optional): Enables kahan summation for more accurate parameter updates when
-            training in low precision (float16 or bfloat16). If unspecified, automatically applies
-            for low precision parameters (default: None)
-        foreach (bool, optional): Enables the foreach implementation. If unspecified, tries to use
-            foreach over for-loop implementation since it is significantly faster (default: None)
+        params: Iterable of parameters to optimize or dicts defining parameter groups
+        lr: Learning rate
+        betas: Coefficents for gradient and squared gradient moving averages (default: (0.9, 0.99))
+        weight_decay: Weight decay coefficient. If `decouple_lr` is False, applies decoupled weight
+            decay (default: 1e-2)
+        eps: Added to denominator to improve numerical stability (default: 1e-6)
+        decouple_lr: Apply fully decoupled weight decay instead of decoupled weight decay
+            (default: False)
+        max_lr: Maximum scheduled learning rate. Set if `lr` is not the maximum scheduled learning
+            rate and `decouple_lr` is True (default: None)
+        kahan_sum: Enables kahan summation for more accurate parameter updates when training in low
+            precision (float16 or bfloat16). If unspecified, automatically applies for low precision
+            parameters (default: None)
+        foreach: Enables the foreach implementation. If unspecified, tries to use foreach over
+            for-loop implementation since it is significantly faster (default: None)
     """
 
     def __init__(
         self,
         params: Iterable[Tensor] | Iterable[dict],
-        lr: float = required,  # type: ignore
+        lr: float,
         betas: tuple[float, float] = (0.9, 0.99),
         weight_decay: float = 1e-2,
         eps: float = 1e-6,
@@ -93,21 +91,21 @@ def adamw(
     See `optimi.AdamW` for more details.
 
     Args:
-        params (list): Parameters to update
-        grads (list): Parameter gradients
-        exp_avgs (list): Gradient moving averages
-        exp_avg_sqs (list): Squared gradient moving averages
-        kahan_comps (list, optional): Kahan summation compensations
-        lr (float): Learning rate
-        beta1 (float): Gradient moving average factor
-        beta2 (float): Squared gradient moving average factor
-        weight_decay (float): Weight decay coefficient
-        eps (float): Added to denominator to improve numerical stability
-        step (tensor): Step counter used for bias correction
-        decouple_lr (bool): Apply learning rate decoupled weight decay
-        max_lr (float, optional): Maximum scheduled learning rate for `decouple_lr`
-        kahan_sum (bool): Enables kahan summation for low precision `params`
-        foreach (bool): Enables the faster foreach implementation
+        params: Parameters to update
+        grads: Parameter gradients
+        exp_avgs: Gradient moving averages
+        exp_avg_sqs: Squared gradient moving averages
+        kahan_comps: Kahan summation compensations
+        lr: Learning rate
+        beta1: Gradient moving average factor
+        beta2: Squared gradient moving average factor
+        weight_decay: Weight decay coefficient
+        eps: Added to denominator to improve numerical stability
+        step: Step counter used for bias correction
+        decouple_lr: Apply fully decoupled weight decay
+        max_lr: Maximum scheduled learning rate for `decouple_lr`
+        kahan_sum: Enables kahan summation for low precision `params`
+        foreach: Enables the faster foreach implementation
     """
     adam(
         params=params,

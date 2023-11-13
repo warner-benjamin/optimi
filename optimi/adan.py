@@ -20,7 +20,7 @@ from warnings import warn
 
 import torch
 from torch import Tensor
-from torch.optim.optimizer import Optimizer, _default_to_fused_or_foreach, required
+from torch.optim.optimizer import Optimizer, _default_to_fused_or_foreach
 from torch.utils._foreach_utils import _group_tensors_by_device_and_dtype
 
 from optimi.utils import MIN_TORCH_2_1, debias_beta
@@ -32,30 +32,30 @@ class Adan(Optimizer):
     """Adan Optimizer: Adaptive Nesterov Momentum Algorithm.
 
     Args:
-        params (iterable): Iterable of parameters to optimize or dicts defining parameter groups
-        lr (float): Default learning rate
-        betas (tuple[float, float, float]): Coefficents for gradient, gradient difference, and
-            squared gradient moving averages (default: (0.98, 0.92, 0.99))
-        weight_decay (float): Weight decay coefficient. If `decouple_lr` is False, applies decoupled
-            weight decay (default: 2e-2)
-        eps (float): Added to denominator to improve numerical stability (default: 1e-6)
-        decouple_lr (bool): Apply learning rate decoupled weight decay instead of decoupled weight
-            decay (default: False)
-        max_lr (float, optional): Maximum scheduled learning rate. Set if `lr` is not the maximum
-            scheduled learning rate and `decouple_lr` is True.
-        adam_wd (bool): Apply weight decay before parameter update (Adam-style), instead of after
+        params: Iterable of parameters to optimize or dicts defining parameter groups
+        lr: Learning rate
+        betas: Coefficents for gradient, gradient difference, and squared gradient moving averages
+            (default: (0.98, 0.92, 0.99))
+        weight_decay: Weight decay coefficient. If `decouple_lr` is False, applies decoupled weight
+            decay (default: 2e-2)
+        eps: Added to denominator to improve numerical stability (default: 1e-6)
+        decouple_lr: Apply fully decoupled weight decay instead of decoupled weight decay
+            (default: False)
+        max_lr: Maximum scheduled learning rate. Set if `lr` is not the maximum scheduled learning
+            rate and `decouple_lr` is True (default: None)
+        adam_wd: Apply weight decay before parameter update (Adam-style), instead of after
             the update per Adan algorithm (default: False)
-        kahan_sum (bool, optional): Enables kahan summation for more accurate parameter updates when
-            training in low precision (float16 or bfloat16). If unspecified, automatically applies
-            for low precision parameters (default: None)
-        foreach (bool, optional): Enables the foreach implementation. If unspecified, tries to use
-            foreach over for-loop implementation since it is significantly faster (default: None)
+        kahan_sum: Enables kahan summation for more accurate parameter updates when training in low
+            precision (float16 or bfloat16). If unspecified, automatically applies for low precision
+            parameters (default: None)
+        foreach: Enables the foreach implementation. If unspecified, tries to use foreach over
+            for-loop implementation since it is significantly faster (default: None)
     """
 
     def __init__(
         self,
         params: Iterable[Tensor] | Iterable[dict],
-        lr: float = required,  # type: ignore
+        lr: float,
         betas: tuple[float, float, float] = (0.98, 0.92, 0.99),
         weight_decay: float = 2e-2,
         eps: float = 1e-6,
@@ -84,7 +84,7 @@ class Adan(Optimizer):
         if decouple_lr and weight_decay >= 1e-3:
             warn(
                 f"You are using {weight_decay=} which is potentially high for {decouple_lr=}. Unlike decoupled weight "
-                f"decay, learning rate decoupled weight decay does not reduce weight decay by the learning rate.",
+                f"decay, fully decoupled weight decay does not reduce weight decay by the learning rate.",
                 category=UserWarning,
             )
         if not MIN_TORCH_2_1:
@@ -162,7 +162,7 @@ class Adan(Optimizer):
         """Performs a single optimization step.
 
         Args:
-            closure (callable, optional): A closure which reevaluates the model and returns the loss
+            closure: A closure which reevaluates the model and returns the loss
         """
         loss = None
         if closure is not None:
@@ -225,25 +225,25 @@ def adan(
     See `optimi.Adan` for more details.
 
     Args:
-        params (list): Parameters to update
-        grads (list): Parameter gradients
-        exp_avgs (list): Gradient moving averages
-        exp_avg_diffs (list): Gradient difference moving averages
-        exp_avg_sqs (list): Squared gradient moving averages
-        prev_grads (list): Pevious parameter gradients
-        kahan_comps (list, optional): Kahan summation compensations
-        lr (float): Learning rate
-        beta1 (float): Gradient moving average coefficient
-        beta2 (float): Gradient difference moving average coefficient
-        beta3 (float): Squared gradient moving average coefficient
-        weight_decay (float): Weight decay coefficient
-        eps (float): Added to denominator to improve numerical stability
-        step (tensor): Step counter used for bias correction
-        decouple_lr (bool): Apply learning rate decoupled weight decay
-        max_lr (float, optional): Maximum scheduled learning rate for `decouple_lr`
-        adam_wd (bool): Apply Adam-style weight decay instead of Adan weight decay
-        kahan_sum (bool): Enables kahan summation for low precision parameters
-        foreach (bool): Enables the faster foreach implementation
+        params: Parameters to update
+        grads: Parameter gradients
+        exp_avgs: Gradient moving averages
+        exp_avg_diffs: Gradient difference moving averages
+        exp_avg_sqs: Squared gradient moving averages
+        prev_grads: Pevious parameter gradients
+        kahan_comps: Kahan summation compensations
+        lr: Learning rate
+        beta1: Gradient moving average coefficient
+        beta2: Gradient difference moving average coefficient
+        beta3: Squared gradient moving average coefficient
+        weight_decay: Weight decay coefficient
+        eps: Added to denominator to improve numerical stability
+        step: Step counter used for bias correction
+        decouple_lr: Apply fully decoupled weight decay
+        max_lr: Maximum scheduled learning rate for `decouple_lr`
+        adam_wd: Apply Adam-style weight decay instead of Adan weight decay
+        kahan_sum: Enables kahan summation for low precision parameters
+        foreach: Enables the faster foreach implementation
     """
     # calculate debiased beta hat & complement terms
     step.add_(1)
@@ -251,7 +251,7 @@ def adan(
     beta2_comp = 1 - debias_beta(beta2, step.item())
     beta3_hat = debias_beta(beta3, step.item())
 
-    # calculate decoupled weight decay or learning rate decoupled weight decay
+    # calculate decoupled weight decay or fully decoupled weight decay
     if weight_decay != 0:
         if decouple_lr:
             weight_decay = (lr / max_lr) * weight_decay

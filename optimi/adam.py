@@ -17,7 +17,7 @@ from warnings import warn
 
 import torch
 from torch import Tensor
-from torch.optim.optimizer import Optimizer, _default_to_fused_or_foreach, required
+from torch.optim.optimizer import Optimizer, _default_to_fused_or_foreach
 from torch.utils._foreach_utils import _group_tensors_by_device_and_dtype
 
 from optimi.utils import MIN_TORCH_2_1, debias_beta
@@ -29,29 +29,27 @@ class Adam(Optimizer):
     """Adam optimizer. Optionally with decoupled weight decay (AdamW).
 
     Args:
-        params (iterable): Iterable of parameters to optimize or dicts defining parameter groups
-        lr (float): Default learning rate
-        betas (tuple[float, float]): Coefficents for gradient and squared gradient moving averages
-            (default: (0.9, 0.99))
-        weight_decay (float): Weight decay coefficient. If `decouple_wd` and `decouple_lr` are
-            False, applies L2 penalty (default: 0)
-        eps (float): Added to denominator to improve numerical stability (default: 1e-6)
-        decouple_wd (bool): Apply decoupled weight decay instead of L2 penalty (default: False)
-        decouple_lr (bool): Apply learning rate decoupled weight decay instead of L2 penalty
-            (default: False)
-        max_lr (float, optional): Maximum scheduled learning rate. Set if `lr` is not the maximum
-            scheduled learning rate and `decouple_lr` is True.
-        kahan_sum (bool, optional): Enables kahan summation for more accurate parameter updates when
-            training in low precision (float16 or bfloat16). If unspecified, automatically applies
-            for low precision parameters (default: None)
-        foreach (bool, optional): Enables the foreach implementation. If unspecified, tries to use
-            foreach over for-loop implementation since it is significantly faster (default: None)
+        params: Iterable of parameters to optimize or dicts defining parameter groups
+        lr: Learning rate
+        betas: Coefficents for gradient and squared gradient moving averages (default: (0.9, 0.99))
+        weight_decay: Weight decay coefficient. If `decouple_wd` and `decouple_lr` are False,
+            applies L2 penalty (default: 0)
+        eps: Added to denominator to improve numerical stability (default: 1e-6)
+        decouple_wd: Apply decoupled weight decay instead of L2 penalty (default: False)
+        decouple_lr: Apply fully decoupled weight decay instead of L2 penalty (default: False)
+        max_lr: Maximum scheduled learning rate. Set if `lr` is not the maximum scheduled learning
+            rate and `decouple_lr` is True (default: None)
+        kahan_sum: Enables kahan summation for more accurate parameter updates when training in low
+            precision (float16 or bfloat16). If unspecified, automatically applies for low precision
+            parameters (default: None)
+        foreach: Enables the foreach implementation. If unspecified, tries to use foreach over
+            for-loop implementation since it is significantly faster (default: None)
     """
 
     def __init__(
         self,
         params: Iterable[Tensor] | Iterable[dict],
-        lr: float = required,  # type: ignore
+        lr: float,
         betas: tuple[float, float] = (0.9, 0.99),
         weight_decay: float = 0,
         eps: float = 1e-6,
@@ -78,7 +76,7 @@ class Adam(Optimizer):
         if decouple_lr and weight_decay >= 1e-3:
             warn(
                 f"You are using {weight_decay=} which is potentially high for {decouple_lr=}. Unlike decoupled weight "
-                f"decay, learning rate decoupled weight decay does not reduce weight decay by the learning rate.",
+                f"decay, fully decoupled weight decay does not reduce weight decay by the learning rate.",
                 category=UserWarning,
             )
         if not MIN_TORCH_2_1:
@@ -146,7 +144,7 @@ class Adam(Optimizer):
         """Performs a single optimization step.
 
         Args:
-            closure (callable, optional): A closure which reevaluates the model and returns the loss
+            closure: A closure which reevaluates the model and returns the loss
         """
         loss = None
         if closure is not None:
@@ -203,29 +201,29 @@ def adam(
     See `optimi.Adam` for more details.
 
     Args:
-        params (list): Parameters to update
-        grads (list): Parameter gradients
-        exp_avgs (list): Gradient moving averages
-        exp_avg_sqs (list): Squared gradient moving averages
-        kahan_comps (list, optional): Kahan summation compensations
-        lr (float): Learning rate
-        beta1 (float): Gradient moving average coefficient
-        beta2 (float): Squared gradient moving average coefficient
-        weight_decay (float): Weight decay coefficient
-        eps (float): Added to denominator to improve numerical stability
-        step (tensor): Step counter used for bias correction
-        decouple_wd (bool): Apply decoupled weight decay
-        decouple_lr (bool): Apply learning rate decoupled weight decay
-        max_lr (float, optional): Maximum scheduled learning rate for `decouple_lr`
-        kahan_sum (bool): Enables kahan summation for low precision parameters
-        foreach (bool): Enables the faster foreach implementation
+        params: Parameters to update
+        grads: Parameter gradients
+        exp_avgs: Gradient moving averages
+        exp_avg_sqs: Squared gradient moving averages
+        kahan_comps: Kahan summation compensations
+        lr: Learning rate
+        beta1: Gradient moving average coefficient
+        beta2: Squared gradient moving average coefficient
+        weight_decay: Weight decay coefficient
+        eps: Added to denominator to improve numerical stability
+        step: Step counter used for bias correction
+        decouple_wd: Apply decoupled weight decay
+        decouple_lr: Apply fully decoupled weight decay
+        max_lr: Maximum scheduled learning rate for `decouple_lr`
+        kahan_sum: Enables kahan summation for low precision parameters
+        foreach: Enables the faster foreach implementation
     """
     # calculate debiased beta hat & complement terms
     step.add_(1)
     beta1_comp = 1 - debias_beta(beta1, step.item())
     beta2_hat = debias_beta(beta2, step.item())
 
-    # calculate decoupled weight decay or learning rate decoupled weight decay
+    # calculate decoupled weight decay or fully decoupled weight decay
     if weight_decay != 0:
         if decouple_lr:
             weight_decay = 1 - (lr / max_lr) * weight_decay
@@ -277,7 +275,7 @@ def _single_adam(
         exp_avg_sq = exp_avg_sqs[i]
         kahan_comp = kahan_comps[i]
 
-        # decoupled weight decay, learning rate decoupled weight decay, or L2 weight decay
+        # decoupled weight decay, fully decoupled weight decay, or L2 weight decay
         if weight_decay != 0:
             if decouple_wd:
                 param.mul_(weight_decay)
@@ -322,7 +320,7 @@ def _foreach_adam(
     for (_, dtype), ((dev_params, dev_grads, dev_exp_avgs, dev_exp_avg_sqs, dev_kahan_comps), _) in grouped_tensors.items():
         do_kahan_sum = kahan_sum and dtype in [torch.float16, torch.bfloat16]
 
-        # decoupled weight decay, learning rate decoupled weight decay, or L2 weight decay
+        # decoupled weight decay, fully decoupled weight decay, or L2 weight decay
         if weight_decay != 0:
             if decouple_wd:
                 torch._foreach_mul_(dev_params, scalar=weight_decay)

@@ -17,7 +17,7 @@ from warnings import warn
 
 import torch
 from torch import Tensor
-from torch.optim.optimizer import Optimizer, _default_to_fused_or_foreach, required
+from torch.optim.optimizer import Optimizer, _default_to_fused_or_foreach
 from torch.utils._foreach_utils import _group_tensors_by_device_and_dtype
 
 from optimi.utils import MIN_TORCH_2_1
@@ -26,30 +26,30 @@ __all__ = ["Lion", "lion"]
 
 
 class Lion(Optimizer):
-    """Lion optimizer. EvoLved Sign Momentum.
+    """Lion optimizer. Evolved Sign Momentum.
 
     Args:
-        params (iterable): Iterable of parameters to optimize or dicts defining parameter groups
-        lr (float): Default learning rate
-        betas (tuple[float, float]): Coefficents for update moving average and gradient moving
-            average (default: (0.9, 0.99))
-        weight_decay (float): Weight decay coefficient. If `decouple_lr` is False, applies decoupled
+        params: Iterable of parameters to optimize or dicts defining parameter groups
+        lr: Learning rate
+        betas: Coefficents for update moving average and gradient moving average
+            (default: (0.9, 0.99))
+        weight_decay: Weight decay coefficient. If `decouple_lr` is False, applies decoupled
             weight decay (default: 0)
-        decouple_lr (bool): Apply learning rate decoupled weight decay instead of decoupled weight
-            decay (default: False)
-        max_lr (float, optional): Maximum scheduled learning rate. Set if `lr` is not the maximum
-            scheduled learning rate and `decouple_lr` is True.
-        kahan_sum (bool, optional): Enables kahan summation for more accurate parameter updates when
-            training in low precision (float16 or bfloat16). If unspecified, automatically applies
-            for low precision parameters (default: None)
-        foreach (bool, optional): Enables the foreach implementation. If unspecified, tries to use
-            foreach over for-loop implementation since it is significantly faster (default: None)
+        decouple_lr: Apply fully decoupled weight decay instead of decoupled weight decay
+            (default: False)
+        max_lr: Maximum scheduled learning rate. Set if `lr` is not the maximum scheduled learning
+            rate and `decouple_lr` is True (default: None)
+        kahan_sum: Enables kahan summation for more accurate parameter updates when training in low
+            precision (float16 or bfloat16). If unspecified, automatically applies for low precision
+            parameters (default: None)
+        foreach: Enables the foreach implementation. If unspecified, tries to use foreach over
+            for-loop implementation since it is significantly faster (default: None)
     """
 
     def __init__(
         self,
         params: Iterable[Tensor] | Iterable[dict],
-        lr: float = required,  # type: ignore
+        lr: float,
         betas: tuple[float, float] = (0.9, 0.99),
         weight_decay: float = 0,
         decouple_lr: bool = False,
@@ -72,7 +72,7 @@ class Lion(Optimizer):
         if decouple_lr and weight_decay >= 1e-3:
             warn(
                 f"You are using {weight_decay=} which is potentially high for {decouple_lr=}. Unlike decoupled weight "
-                f"decay, learning rate decoupled weight decay does not reduce weight decay by the learning rate.",
+                f"decay, fully decoupled weight decay does not reduce weight decay by the learning rate.",
                 category=UserWarning,
             )
         if not MIN_TORCH_2_1:
@@ -129,7 +129,7 @@ class Lion(Optimizer):
         """Performs a single optimization step.
 
         Args:
-            closure (callable, optional): A closure which reevaluates the model and returns the loss
+            closure: A closure which reevaluates the model and returns the loss
         """
         loss = None
         if closure is not None:
@@ -178,20 +178,20 @@ def lion(
     See `optimi.Lion` for more details.
 
     Args:
-        params (list): Parameters to update
-        grads (list): Parameter gradients
-        exp_avgs (list): Gradient moving averages
-        kahan_comps (list, optional): Kahan summation compensations
-        lr (float): Learning rate
-        beta1 (float): Update moving average coefficient
-        beta2 (float): Gradient moving average coefficient
-        weight_decay (float): Weight decay coefficient
-        decouple_lr (bool): Apply learning rate decoupled weight decay
-        max_lr (float, optional): Maximum scheduled learning rate for `decouple_lr`
-        kahan_sum (bool): Enables kahan summation for low precision `params`
-        foreach (bool): Enables the faster foreach implementation
+        params: Parameters to update
+        grads: Parameter gradients
+        exp_avgs: Gradient moving averages
+        kahan_comps: Kahan summation compensations
+        lr: Learning rate
+        beta1: Update moving average coefficient
+        beta2: Gradient moving average coefficient
+        weight_decay: Weight decay coefficient
+        decouple_lr: Apply fully decoupled weight decay
+        max_lr: Maximum scheduled learning rate for `decouple_lr`
+        kahan_sum: Enables kahan summation for low precision `params`
+        foreach: Enables the faster foreach implementation
     """
-    # calculate decoupled weight decay or learning rate decoupled weight decay
+    # calculate decoupled weight decay or fully decoupled weight decay
     if weight_decay != 0:
         if decouple_lr:
             weight_decay = 1 - (lr / max_lr) * weight_decay
@@ -240,7 +240,7 @@ def _single_lion(
         exp_avg = exp_avgs[i]
         kahan_comp = kahan_comps[i]
 
-        # decoupled weight decay or learning rate decoupled weight decay
+        # decoupled weight decay or fully decoupled weight decay
         if weight_decay != 0:
             param.mul_(weight_decay)
 
@@ -279,7 +279,7 @@ def _foreach_lion(
 ):
     grouped_tensors = _group_tensors_by_device_and_dtype([params, grads, exp_avgs, kahan_comps])
     for (_, dtype), ((dev_params, dev_grads, dev_exp_avgs, dev_kahan_comps), _) in grouped_tensors.items():
-        # decoupled weight decay or learning rate decoupled weight decay
+        # decoupled weight decay or fully decoupled weight decay
         if weight_decay != 0:
             torch._foreach_mul_(dev_params, scalar=weight_decay)
 
