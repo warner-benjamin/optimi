@@ -1,0 +1,98 @@
+site_name: optimī
+
+# Repository
+repo_name: warner-benjamin/optimi
+repo_url: https://github.com/warner-benjamin/optimi
+
+copyright: Copyright &copy; 2023 Benjamin Warner, MIT License
+
+theme:
+  name: material
+  custom_dir: docs/overrides
+  font:
+    text: Inter
+    code: Jetbrains Mono
+  favicon: images/favicon.ico
+  palette:
+    scheme: swiss
+    primary: swiss
+    accent: swiss
+  features:
+    - navigation.expand
+    - search.highlight
+    - search.share
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - footnotes
+  - md_in_html
+  - pymdownx.arithmatex:
+      generic: true
+  - pymdownx.betterem
+  - pymdownx.caret
+  - pymdownx.details
+  - pymdownx.highlight:
+      use_pygments: true
+  - pymdownx.mark
+  - pymdownx.tabbed
+  - pymdownx.tilde
+  - pymdownx.snippets:
+  - pymdownx.superfences
+  - tables
+  - toc:
+      permalink: true
+
+plugins:
+  - autorefs
+  - caption:
+      table:
+        enable: true
+        position: top
+  - search:
+      lang: en
+  - mkdocstrings:
+      default_handler: python
+      handlers:
+        python:
+          options:
+            show_bases: false
+            show_source: false
+            show_root_heading: True
+            show_root_toc_entry: False
+            show_root_full_path: False
+            members: false
+            separate_signature: true
+            show_signature: false
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/warner-benjamin
+    - icon: fontawesome/brands/twitter
+      link: https://twitter.com/benjamin_warner
+    - icon: fontawesome/brands/threads
+      link: https://twitter.com/@_benjaminwarner
+
+extra_javascript:
+  - js/katex.js
+  - https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.js
+  - https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/contrib/auto-render.min.js
+
+extra_css:
+  - css/extra.css
+  - https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.css
+
+nav:
+  - Low Precision Training: kahan_summation.md
+  - Fully Decoupled Weight Decay: fully_decoupled_weight_decay.md
+  - ForEach Optimizers: foreach.md
+  - Which Optimizer?: which_optimizer.md
+  - Optimizers:
+    - Adam: optimizers/adam.md
+    - AdamW: optimizers/adamw.md
+    - Adan: optimizers/adan.md
+    - Lion: optimizers/lion.md
+    - SGD: optimizers/sgd.md
+    - StableAdamW: optimizers/stableadamw.md
+

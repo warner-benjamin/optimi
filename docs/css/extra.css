@@ -1,0 +1,278 @@
+@import url(https://ghp-cdn.benjaminwarner.dev/fonts/fonts.scss);
+
+:root {
+    --md-text-font: Inter, "Source Sans Pro", Helvetica, sans-serif;
+    --black: rgb(24, 24, 24);
+    --white: rgb(254, 254, 254);
+    --gray: rgb(231, 235, 235);
+    --code-black: rgb(44, 44, 44);
+    --light-black: rgb(75, 75, 75);
+    --dark-grey: rgb(154, 154, 154);
+    --purple: #9a3fe4;
+    --blue: #009DDB;
+    --yellow: #fec92e;
+    --red: #DC3918;
+    --green: #28ac00;
+    --orange: #ff6f00;
+    --light-purple: rgba(154, 63, 228, 0.75);
+    --dark-purple: rgba(154, 63, 228, 0.6);
+    --link-color-hover-code: rgba(154, 63, 228, 0.65);
+    --background-blue: rgba(0, 157, 219, 0.3);
+    --background-yellow: rgba(254, 202, 47, 0.3);
+    --background-red: rgba(220, 57, 24, 0.3);
+    --background-green: rgba(40, 173, 0, 0.3);
+    --background-orange: rgba(255, 111, 0, 0.3);
+  }
+
+  [data-md-color-scheme="swiss"] {
+    --md-default-bg-color: var(--white);
+    --md-default-fg-color: var(--black);
+    --md-default-fg-color--light: var(--black);
+    --md-default-fg-color--lighter: var(--dark-grey);
+    --md-primary-fg-color: var(--white);
+    --md-primary-bg-color: var(--purple);
+    --md-accent-fg-color: var(--light-purple);
+    --md-primary-fg-color--dark: var(--white);
+
+    --md-typeset-color: var(--black);
+    --md-typeset-a-color: var(--light-purple);
+    --md-typeset-mark-color: var(--dark-purple);
+
+    --md-code-fg-color: var(--purple);
+    --md-code-bg-color: var(--gray);
+
+    --md-typeset-table-color: rgba(24, 24, 24, 0.05);
+
+      /* Code highlighting color shades */
+    /* --md-code-hl-color:                  #9a3fe4;
+    --md-code-hl-color--light:           #9a3fe4; */
+    --md-code-hl-number-color:           #db5f00;
+    --md-code-hl-special-color:          #d32300;
+    --md-code-hl-function-color:         #cc9901;
+    --md-code-hl-constant-color:         #ca299a;
+    --md-code-hl-keyword-color:          #c226f1;
+    --md-code-hl-string-color:           #35b4a8;
+    --md-code-hl-name-color:             #e7ebeb;
+    --md-code-hl-operator-color:         #1492db;
+    --md-code-hl-punctuation-color:      #e7ebeb;
+    --md-code-hl-comment-color:          #a2a7af;
+    --md-code-hl-generic-color:          #1bac53;
+    --md-code-hl-variable-color:         #1492db;
+  }
+
+
+/* Admonitions */
+
+.md-typeset .admonition, .md-typeset details {
+  border-width: 0;
+  border-left-width: 8px;
+  font-size: .7rem;
+}
+
+.md-typeset .admonition.note, .md-typeset details.note {
+  border-color: var(--blue);
+}
+
+.md-typeset .note>.admonition-title:before,.md-typeset .note>summary:before,
+.md-typeset .note>.admonition-title:after,.md-typeset .note>summary:after  {
+  background-color: var(--blue);
+}
+
+.md-typeset .admonition.note:focus-within,.md-typeset details.note:focus-within {
+  box-shadow: 0 0 0 .2rem var(--background-blue);
+}
+
+.md-typeset .note>.admonition-title,.md-typeset .note>summary {
+  background-color: var(--background-blue);
+}
+
+
+.md-typeset .admonition.tip, .md-typeset details.tip {
+  border-color: var(--green);
+}
+
+.md-typeset .tip>.admonition-title:before,.md-typeset .tip>summary:before,
+.md-typeset .tip>.admonition-title:after,.md-typeset .tip>summary:after  {
+  background-color: var(--green);
+}
+
+.md-typeset .admonition.tip:focus-within,.md-typeset details.tip:focus-within {
+  box-shadow: 0 0 0 .2rem var(--background-green);
+}
+
+.md-typeset .tip>.admonition-title,.md-typeset .tip>summary {
+  background-color: var(--background-green);
+}
+
+/* End Admonitions */
+
+/* Maximum space for text block see: https://github.com/squidfunk/mkdocs-material/discussions/3692 */
+.md-grid {
+  max-width: 68rem;
+}
+
+/* Table */
+.md-typeset__scrollwrap {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+
+.md-typeset table:not([class]) {
+  font-size: 0.7rem;
+  border: 0;
+}
+
+.md-typeset table:not([class]) caption {
+  font-size: 0.725rem;
+  padding-bottom: 0.25rem;
+}
+
+.md-typeset table:not([class]) tbody {
+  border-bottom-color: #c4c4c4
+}
+
+.md-typeset table:not([class]) th {
+  font-weight: 700;
+  min-width: 5rem;
+  padding: .5rem .5rem;
+  vertical-align: top
+}
+
+.md-typeset table:not([class]) tr:last-child > * {
+  border-bottom: .05rem solid var(--black);
+}
+
+.md-typeset table:not([class]) th {
+  border-top: .05rem solid var(--black);
+}
+
+.md-typeset table:not([class]) tr:not(:last-child) > * {
+  border-bottom: .05rem solid var(--md-typeset-table-color);
+}
+
+.md-typeset table:not([class]) td {
+  border-top: none;
+  padding: .5rem .5rem;
+  vertical-align: top
+}
+
+
+/* Links */
+.md-content a:not(.headerlink):not(.footnote-ref):not(.footnote-backref) {
+    box-shadow: inset 0 -0.115rem 0 var(--light-purple);
+    text-decoration: none;
+    transition: all .15s cubic-bezier(.33,.66,.66,1);
+    color: var(--black);
+
+  &:hover { box-shadow: inset 0 -2rem 0 var(--dark-purple);
+            color: var(--black) }
+}
+
+/* Katex */
+.katex-display {
+  margin-top: 0 !important;
+  margin-bottom: 0!important;
+}
+
+.katex {
+  font-size: 0.9rem !important;
+}
+
+/* Search */
+.md-search__inner {
+  width: 8rem;
+}
+
+.md-search__input {
+  background-color: var(--white);
+  color: var(--black)
+}
+
+.md-search__input+.md-search__icon {
+  color: var(--black)
+}
+
+.md-search__suggest {
+  color: var(--dark-grey);
+}
+
+.md-search__input::placeholder {
+  color: var(--dark-grey)
+}
+
+/* Header */
+.md-header {
+  border-bottom-color: var(--black);
+  border-bottom-style: solid;
+  border-bottom-width: 1px;
+}
+
+.md-header__button:hover {
+  color: var(--black);
+  opacity: 1;
+}
+
+.md-header__source {
+  color: var(--black);
+}
+
+.md-source:hover {
+  color: var(--purple);
+  opacity: 1;
+}
+
+.custom-title {
+  flex-grow: 1;
+  font-size: .9rem;
+  height: 2.4rem;
+  line-height: 2.4rem;
+  font-weight: 700;
+  padding-left: 0.6rem;
+  padding-right: 0.6rem;
+
+  &:hover {
+    color: var(--black);
+  }
+}
+
+/* Nav */
+.md-nav__item .md-nav__link--active,.md-nav__item .md-nav__link--active code {
+  color: var(--purple);
+}
+
+/* Content */
+
+.md-content__inner {
+  margin: 0 .8rem 1.75rem;
+  padding-top: .6rem
+}
+
+.footnote {
+  margin-top: 1.75rem;
+}
+
+/* Code Higlights */
+.highlight code {
+  background-color: var(--code-black);
+  color: var(--white)
+}
+
+/* Lists */
+
+.md-typeset ol li,.md-typeset ul li {
+  margin-bottom: .1rem
+}
+
+.md-typeset ol li blockquote,.md-typeset ol li p,.md-typeset ul li blockquote,.md-typeset ul li p {
+  margin: .1rem 0
+}
+
+.md-typeset ol li:last-child,.md-typeset ul li:last-child {
+  margin-bottom: 0
+}
+
+.md-typeset ol li ol,.md-typeset ol li ul,.md-typeset ul li ol,.md-typeset ul li ul {
+  margin-bottom: .1rem;
+  margin-top: .1rem
+}
