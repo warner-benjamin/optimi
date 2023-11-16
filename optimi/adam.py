@@ -31,7 +31,7 @@ class Adam(Optimizer):
     Args:
         params: Iterable of parameters to optimize or dicts defining parameter groups
         lr: Learning rate
-        betas: Coefficents for gradient and squared gradient moving averages (default: (0.9, 0.99))
+        betas: Coefficients for gradient and squared gradient moving averages (default: (0.9, 0.99))
         weight_decay: Weight decay coefficient. If `decouple_wd` and `decouple_lr` are False,
             applies L2 penalty (default: 0)
         eps: Added to denominator to improve numerical stability (default: 1e-6)
@@ -39,7 +39,7 @@ class Adam(Optimizer):
         decouple_lr: Apply fully decoupled weight decay instead of L2 penalty (default: False)
         max_lr: Maximum scheduled learning rate. Set if `lr` is not the maximum scheduled learning
             rate and `decouple_lr` is True (default: None)
-        kahan_sum: Enables kahan summation for more accurate parameter updates when training in low
+        kahan_sum: Enables Kahan summation for more accurate parameter updates when training in low
             precision (float16 or bfloat16). If unspecified, automatically applies for low precision
             parameters (default: None)
         foreach: Enables the foreach implementation. If unspecified, tries to use foreach over
@@ -215,7 +215,7 @@ def adam(
         decouple_wd: Apply decoupled weight decay
         decouple_lr: Apply fully decoupled weight decay
         max_lr: Maximum scheduled learning rate for `decouple_lr`
-        kahan_sum: Enables kahan summation for low precision parameters
+        kahan_sum: Enables Kahan summation for low precision parameters
         foreach: Enables the faster foreach implementation
     """
     # calculate debiased beta hat & complement terms

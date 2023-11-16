@@ -45,7 +45,7 @@ class SGD(Optimizer):
             rate and `decouple_lr` is True (default: None)
         torch_init: Initialize momentum buffer with first gradient instead of zeroes. Enable to
             match PyTorch SGD when using dampening (default: False)
-        kahan_sum: Enables kahan summation for more accurate parameter updates when training in low
+        kahan_sum: Enables Kahan summation for more accurate parameter updates when training in low
             precision (float16 or bfloat16). If unspecified, automatically applies for low precision
             parameters (default: None)
         foreach: Enables the foreach implementation. If unspecified, tries to use foreach over
@@ -203,7 +203,7 @@ def sgd(
         decouple_wd: Apply decoupled weight decay
         decouple_lr: Apply fully decoupled weight decay
         max_lr: Maximum scheduled learning rate for `decouple_lr`
-        kahan_sum: Enables kahan summation for low precision `params`
+        kahan_sum: Enables Kahan summation for low precision `params`
         foreach: Enables the faster foreach implementation
     """
     # calculate decoupled weight decay or fully decoupled weight decay

@@ -34,7 +34,7 @@ class Adan(Optimizer):
     Args:
         params: Iterable of parameters to optimize or dicts defining parameter groups
         lr: Learning rate
-        betas: Coefficents for gradient, gradient difference, and squared gradient moving averages
+        betas: Coefficients for gradient, gradient difference, and squared gradient moving averages
             (default: (0.98, 0.92, 0.99))
         weight_decay: Weight decay coefficient. If `decouple_lr` is False, applies decoupled weight
             decay (default: 2e-2)
@@ -45,7 +45,7 @@ class Adan(Optimizer):
             rate and `decouple_lr` is True (default: None)
         adam_wd: Apply weight decay before parameter update (Adam-style), instead of after
             the update per Adan algorithm (default: False)
-        kahan_sum: Enables kahan summation for more accurate parameter updates when training in low
+        kahan_sum: Enables Kahan summation for more accurate parameter updates when training in low
             precision (float16 or bfloat16). If unspecified, automatically applies for low precision
             parameters (default: None)
         foreach: Enables the foreach implementation. If unspecified, tries to use foreach over
@@ -242,7 +242,7 @@ def adan(
         decouple_lr: Apply fully decoupled weight decay
         max_lr: Maximum scheduled learning rate for `decouple_lr`
         adam_wd: Apply Adam-style weight decay instead of Adan weight decay
-        kahan_sum: Enables kahan summation for low precision parameters
+        kahan_sum: Enables Kahan summation for low precision parameters
         foreach: Enables the faster foreach implementation
     """
     # calculate debiased beta hat & complement terms

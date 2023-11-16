@@ -31,7 +31,7 @@ class Lion(Optimizer):
     Args:
         params: Iterable of parameters to optimize or dicts defining parameter groups
         lr: Learning rate
-        betas: Coefficents for update moving average and gradient moving average
+        betas: Coefficients for update moving average and gradient moving average
             (default: (0.9, 0.99))
         weight_decay: Weight decay coefficient. If `decouple_lr` is False, applies decoupled
             weight decay (default: 0)
@@ -39,7 +39,7 @@ class Lion(Optimizer):
             (default: False)
         max_lr: Maximum scheduled learning rate. Set if `lr` is not the maximum scheduled learning
             rate and `decouple_lr` is True (default: None)
-        kahan_sum: Enables kahan summation for more accurate parameter updates when training in low
+        kahan_sum: Enables Kahan summation for more accurate parameter updates when training in low
             precision (float16 or bfloat16). If unspecified, automatically applies for low precision
             parameters (default: None)
         foreach: Enables the foreach implementation. If unspecified, tries to use foreach over
@@ -188,7 +188,7 @@ def lion(
         weight_decay: Weight decay coefficient
         decouple_lr: Apply fully decoupled weight decay
         max_lr: Maximum scheduled learning rate for `decouple_lr`
-        kahan_sum: Enables kahan summation for low precision `params`
+        kahan_sum: Enables Kahan summation for low precision `params`
         foreach: Enables the faster foreach implementation
     """
     # calculate decoupled weight decay or fully decoupled weight decay

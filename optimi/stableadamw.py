@@ -31,7 +31,7 @@ class StableAdamW(Optimizer):
     Args:
         params: Iterable of parameters to optimize or dicts defining parameter groups
         lr: Learning rate
-        betas: Coefficents for gradient and squared gradient moving averages (default: (0.9, 0.99))
+        betas: Coefficients for gradient and squared gradient moving averages (default: (0.9, 0.99))
         weight_decay: Weight decay coefficient. If `decouple_lr` is False, applies decoupled weight
             decay (default: 1e-2)
         eps: Added to denominator to improve numerical stability (default: 1e-6)
@@ -39,7 +39,7 @@ class StableAdamW(Optimizer):
             (default: False)
         max_lr: Maximum scheduled learning rate. Set if `lr` is not the maximum scheduled learning
             rate and `decouple_lr` is True (default: None)
-        kahan_sum: Enables kahan summation for more accurate parameter updates when training in low
+        kahan_sum: Enables Kahan summation for more accurate parameter updates when training in low
             precision (float16 or bfloat16). If unspecified, automatically applies for low precision
             parameters (default: None)
         foreach: Enables the foreach implementation. If unspecified, tries to use foreach over
@@ -51,7 +51,7 @@ class StableAdamW(Optimizer):
         params: Iterable[Tensor] | Iterable[dict],
         lr: float,
         betas: tuple[float, float] = (0.9, 0.99),
-        weight_decay: float = 0,
+        weight_decay: float = 1e-2,
         eps: float = 1e-6,
         decouple_lr: bool = False,
         max_lr: float | None = None,
@@ -216,7 +216,7 @@ def stableadamw(
         step: Step counter used for bias correction
         decouple_lr: Apply fully decoupled weight decay
         max_lr: Maximum scheduled learning rate for `decouple_lr`
-        kahan_sum: Enables kahan summation for low precision parameters
+        kahan_sum: Enables Kahan summation for low precision parameters
         foreach: Enables the faster foreach implementation
     """
     # calculate debiased beta hat & complement terms
