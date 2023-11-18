@@ -7,7 +7,7 @@
     --gray: rgb(231, 235, 235);
     --code-black: rgb(44, 44, 44);
     --light-black: rgb(75, 75, 75);
-    --dark-grey: rgb(154, 154, 154);
+    --dark-gray: rgb(154, 154, 154);
     --purple: #9a3fe4;
     --blue: #009DDB;
     --yellow: #fec92e;
@@ -16,6 +16,7 @@
     --orange: #ff6f00;
     --light-purple: rgba(154, 63, 228, 0.75);
     --dark-purple: rgba(154, 63, 228, 0.6);
+    --lighter-purple: rgb(169, 64, 255);
     --link-color-hover-code: rgba(154, 63, 228, 0.65);
     --background-blue: rgba(0, 157, 219, 0.3);
     --background-yellow: rgba(254, 202, 47, 0.3);
@@ -27,8 +28,9 @@
   [data-md-color-scheme="swiss"] {
     --md-default-bg-color: var(--white);
     --md-default-fg-color: var(--black);
-    --md-default-fg-color--light: var(--black);
-    --md-default-fg-color--lighter: var(--dark-grey);
+    --md-default-fg-color--light: var(--light-black);
+    --md-default-fg-color--lighter: var(--dark-gray);
+    --md-default-fg-color--lightest: var(--gray);
     --md-primary-fg-color: var(--white);
     --md-primary-bg-color: var(--purple);
     --md-accent-fg-color: var(--light-purple);
@@ -194,11 +196,11 @@
 }
 
 .md-search__suggest {
-  color: var(--dark-grey);
+  color: var(--dark-gray);
 }
 
 .md-search__input::placeholder {
-  color: var(--dark-grey)
+  color: var(--dark-gray)
 }
 
 /* Header */
@@ -243,19 +245,58 @@
 
 /* Content */
 
+.md-typeset h1 {
+  color: var(--md-default-fg-color);
+}
+
 .md-content__inner {
   margin: 0 .8rem 1.75rem;
   padding-top: .6rem
 }
 
+.md-typeset .headerlink {
+  color: var(--md-default-fg-color--lightest);
+}
+
+/* Footnote */
+
 .footnote {
   margin-top: 1.75rem;
+}
+
+.md-typeset .footnote {
+  color: var(--md-default-fg-color--lighter);
 }
 
 /* Code Higlights */
 .highlight code {
   background-color: var(--code-black);
   color: var(--white)
+}
+
+/* Clipboard */
+
+.md-clipboard {
+  color: var(--md-default-fg-color--lighter);
+}
+
+@media print {
+  .md-clipboard {
+      display: none
+  }
+}
+
+.md-clipboard:not(.focus-visible) {
+  -webkit-tap-highlight-color: transparent;
+  outline: none
+}
+
+:hover>.md-clipboard {
+  color: var(--lighter-purple)
+}
+
+.md-clipboard:focus,.md-clipboard:hover {
+  color: var(--md-default-fg-color--lightest)
 }
 
 /* Lists */

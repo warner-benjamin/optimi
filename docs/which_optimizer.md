@@ -26,6 +26,8 @@ If optimizer memory usage is important and optimi’s Kahan summation doesn’t 
 
 Lion uses one memory buffer for both momentum and the update step, reducing memory usage compared to AdamW. While [reviews are mixed](https://arxiv.org/abs/2307.06440), Lion can [match AdamW in some training scenarios](https://github.com/lucidrains/lion-pytorch/discussions/1).
 
+Prior to Adam and AdamW, SGD was the default optimizer for deep learning. SGD with Momentum can match or outperform AdamW on some tasks but can require more hyperparameter tuning. Consider using SGD with decoupled weight decay, it can lead to better results than L2 regularization.
+
 ## Potential Upgrade
 
 [Adan](optimizers/adan.md) can outperform AdamW at the expense of extra memory usage due to using two more buffers then AdamW. Consider trying Adan if optimizer memory usage isn’t a priority, or when finetuning.

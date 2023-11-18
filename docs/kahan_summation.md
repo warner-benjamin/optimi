@@ -36,7 +36,7 @@ Using Kahan summation to improve low precision model training was first introduc
 
 Training in BFloat16 with Kahan summation can reduce non-activation training memory usage by 37.5 to 45.5 percent when using an Adam optimizer, as Table 1 shows below.
 
-optimi reduces the potential extra memory overhead of Kahan summation by reusing the gradient buffer for temporary calculations.
+optimi reduces the potential extra memory overhead of Kahan summation by reusing the gradient buffer for temporary variables.
 
 Table: Adam Per Parameter Memory Usage, Excluding Activations
 
@@ -81,6 +81,6 @@ $$
 
 This shows the optimi implementation of Kahan summation optimizers, which is equivalent to the *Revisiting BFloat16 Training* formulation.
 
-[^1]: Current testing on smaller models shows no degradation in training performance.
+[^1]: Current testing on small models shows no degradation in training performance.
 
 [^2]: Also known as Kahan–Babuška summation or compensated summation.

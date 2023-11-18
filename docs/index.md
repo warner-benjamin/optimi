@@ -1,13 +1,13 @@
 ---
-title: "optimī"
-description: "Fast Modern PyTorch Optimizers with Low Precision Training"
+title: "optimi"
+description: "Fast, Modern, and Low Precision PyTorch Optimizers"
 ---
 
 # optimī
 
-**Fast Modern PyTorch Optimizers with Low Precision Training**
+**Fast, Modern, and Low Precision PyTorch Optimizers**
 
-optimi is a PyTorch optimizer library which enables accurate low precision training via Kahan summation, supports fully decoupled weight decay, and features fast implementations of modern optimizers.
+optimi enables accurate low precision training via Kahan summation, supports fully decoupled weight decay, and features fast implementations of modern optimizers.
 
 ## Low Precision Training with Kahan Summation
 
@@ -23,7 +23,7 @@ Fully decoupled weight decay decouples weight decay from the learning rate, more
 
 ## Foreach Implementations
 
-All optimi optimizers have fast [foreach implementations](foreach.md), which can significantly outperform the for-loop versions. optimi reuses the gradient buffer for temporary calculations to reduce foreach memory usage.
+All optimi optimizers have fast [foreach implementations](foreach.md), which can significantly outperform the for-loop versions. optimi reuses the gradient buffer for temporary variables to reduce foreach memory usage.
 
 ## Install
 
@@ -68,11 +68,11 @@ model = nn.Linear(20, 1)
 opt = AdamW(model.parameters(), lr=1e-3, weight_decay=1e-2)
 ```
 
-## Difference from PyTorch Optimizers
+## Difference from PyTorch
 
 optimi optimizers do not support compilation, differentiation, or have capturable versions.
 
-optimi Adam optimizers do not support AMSGrad and SGD doesn’t support Nesterov momentum. Optimizers which debias updates (Adam optimizers and Adan) calculate the debias term per parameter group, not per parameter.
+optimi Adam optimizers do not support AMSGrad and SGD does not support Nesterov momentum. Optimizers which debias updates (Adam optimizers and Adan) calculate the debias term per parameter group, not per parameter.
 
 ## Optimizers
 

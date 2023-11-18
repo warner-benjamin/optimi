@@ -1,4 +1,5 @@
 site_name: optimī
+site_url: https://optimi.benjaminwarner.dev
 
 # Repository
 repo_name: warner-benjamin/optimi
@@ -18,6 +19,7 @@ theme:
     primary: swiss
     accent: swiss
   features:
+    - content.code.copy
     - navigation.expand
     - search.highlight
     - search.share
