@@ -12,7 +12,7 @@ Training in BFloat16 with Kahan summation can reduce non-activation training mem
 
 ## Fully Decoupled Weight Decay
 
-In addition to supporting PyTorch-style decoupled weight decay, optimi optimizers also supports [fully decoupled weight decay](https://optimi.benjaminwarner.dev/fully_decoupled_weight_decay).
+In addition to supporting PyTorch-style decoupled weight decay, optimi optimizers also support [fully decoupled weight decay](https://optimi.benjaminwarner.dev/fully_decoupled_weight_decay).
 
 Fully decoupled weight decay decouples weight decay from the learning rate, more accurately following [*Decoupled Weight Decay Regularization*](https://arxiv.org/abs/1711.05101). This can help simplify hyperparameter tuning as the optimal weight decay is no longer tied to the learning rate.
 
@@ -29,7 +29,7 @@ https://optimi.benjaminwarner.dev
 optimi is available to install from pypi.
 
 ```bash
-pip install optimi
+pip install torch-optimi
 ```
 
 ## Usage
