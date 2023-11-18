@@ -1,8 +1,8 @@
 [project]
 name = "optimi"
-version = "0.0.4"
+version = "0.1.0"
 authors = [{name = "Benjamin Warner", email = "me@benjaminwarner.dev"}]
-description = "Fast modern PyTorch Optimizers"
+description = "Fast, Modern, & Low Precision PyTorch Optimizers"
 readme = "README.md"
 requires-python = ">=3.8"
 license = {file = "LICENSE"}
@@ -20,12 +20,12 @@ classifiers = [
 dependencies = ["torch>=1.13", "packaging>=21.3"]
 
 [project.optional-dependencies]
-dev = ["pytest>=7.4.3", "ruff>=0.1.3", "mkdocs-material>=9.4.7", "mkdocstrings>=0.23.0", "mkdocstrings-python>=1.7.3", "black>=23.10.1", "mkdocs-caption>=0.0.9"]
+dev = ["pytest>=7.4.3", "ruff>=0.1.3"]
 test = ["pytest>=7.4.3", "ruff>=0.1.3", "pytest-md>=0.2.0", "numpy>=1.23"]
 docs = ["mkdocs-material>=9.4.7", "mkdocstrings>=0.23.0", "mkdocstrings-python>=1.7.3", "black>=23.10.1", "mkdocs-caption>=0.0.9"]
 
 [project.urls]
-"Homepage" = "https://github.com/warner-benjamin/optimi"
+"Homepage" = "https://optimi.benjaminwarner.dev"
 "Bug Reports" = "https://github.com/warner-benjamin/optimi/issues"
 "Source" = "https://github.com/warner-benjamin/optimi"
 
