@@ -1,6 +1,6 @@
 [project]
 name = "torch-optimi"
-version = "0.1.0"
+version = "0.1.1"
 authors = [{name = "Benjamin Warner", email = "me@benjaminwarner.dev"}]
 description = "Fast, Modern, & Low Precision PyTorch Optimizers"
 readme = "README.md"
