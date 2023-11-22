@@ -74,7 +74,7 @@ extra:
     - icon: fontawesome/brands/twitter
       link: https://twitter.com/benjamin_warner
     - icon: fontawesome/brands/threads
-      link: https://twitter.com/@_benjaminwarner
+      link: https://threads.net/@_benjaminwarner
 
 extra_javascript:
   - js/katex.js

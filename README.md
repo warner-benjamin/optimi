@@ -67,9 +67,9 @@ model = nn.Linear(20, 1)
 opt = AdamW(model.parameters(), lr=1e-3, weight_decay=1e-2)
 ```
 
-## Difference from PyTorch
+## Differences from PyTorch
 
-optimi optimizers do not support compilation, differentiation, or have capturable versions.
+optimi optimizers do not support compilation, differentiation, complex numbers, or have capturable versions.
 
 optimi Adam optimizers do not support AMSGrad and SGD does not support Nesterov momentum. Optimizers which debias updates (Adam optimizers and Adan) calculate the debias term per parameter group, not per parameter.
 
