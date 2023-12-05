@@ -197,7 +197,7 @@ def radam(
     kahan_sum: bool = False,
     foreach: bool = False,
 ):
-    """Functional API to apply an Adam or AdamW optimization step.
+    """Functional API to apply an RAdam optimization step.
 
     See `optimi.RAdam` for more details.
 
