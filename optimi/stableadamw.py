@@ -334,9 +334,12 @@ def _foreach_stableadamw(
         torch._foreach_addcmul_(dev_exp_avg_sqs, dev_grads, dev_grads, value=1 - beta2_hat)
 
         # compute per parameter stabilization terms using dev_grads as temp buffer
-        max_root_exp_avg_sqs = torch._foreach_maximum(dev_exp_avg_sqs, other=dev_eps_sqs)
+        max_exp_avg_sqs = torch._foreach_maximum(dev_exp_avg_sqs, other=dev_eps_sqs)
         torch._foreach_pow_(dev_grads, exponent=2)
-        torch._foreach_div_(dev_grads, max_root_exp_avg_sqs)
+        torch._foreach_div_(dev_grads, max_exp_avg_sqs)
+
+        # delete local intermediates to potentially save memory
+        del max_exp_avg_sqs
 
         # calculate RMS stabilized learning rates and optionally weight decay
         if weight_decay != 0:
@@ -353,18 +356,14 @@ def _foreach_stableadamw(
         else:
             neg_lrs = [-lr / max(1, r.mean().sqrt().item()) for r in dev_grads]
 
-        # delete local intermediates to save on memory or reuse for kahan compensation
-        if not do_kahan_sum:
-            del dev_grads
-
-        # adam denominator
-        torch._foreach_copy_(max_root_exp_avg_sqs, dev_exp_avg_sqs)
-        torch._foreach_sqrt_(max_root_exp_avg_sqs)
-        torch._foreach_add_(max_root_exp_avg_sqs, eps)
+        # Adam denominator using dev_grads as a temp buffer
+        torch._foreach_copy_(dev_grads, dev_exp_avg_sqs)
+        torch._foreach_sqrt_(dev_grads)
+        torch._foreach_add_(dev_grads, eps)
 
         if do_kahan_sum:
             # Adam step
-            torch._foreach_addcdiv_(dev_kahan_comps, dev_exp_avgs, max_root_exp_avg_sqs, scalars=neg_lrs)
+            torch._foreach_addcdiv_(dev_kahan_comps, dev_exp_avgs, dev_grads, scalars=neg_lrs)
 
             # update weights with kahan compensation using dev_grads as temp buffer
             torch._foreach_copy_(dev_grads, dev_params)
@@ -375,4 +374,4 @@ def _foreach_stableadamw(
             torch._foreach_add_(dev_kahan_comps, dev_grads, alpha=1)
         else:
             # Adam step
-            torch._foreach_addcdiv_(dev_params, dev_exp_avgs, max_root_exp_avg_sqs, scalars=neg_lrs)
+            torch._foreach_addcdiv_(dev_params, dev_exp_avgs, dev_grads, scalars=neg_lrs)
