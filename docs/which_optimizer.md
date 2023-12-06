@@ -32,6 +32,9 @@ Prior to Adam and AdamW, SGD was the default optimizer for deep learning. SGD wi
 
 [Adan](optimizers/adan.md) can outperform AdamW at the expense of extra memory usage due to using two more buffers then AdamW. Consider trying Adan if optimizer memory usage isn’t a priority, or when finetuning.
 
+## Small Batch CNN
+
+[Ranger](optimizers/ranger.md) can outperform AdamW when training or finetuning on small batch sizes (~512 or less) with convolutional neural networks. It does use one more buffer then AdamW. Ranger performs best with a flat learning rate followed by a short learning rate decay.
 
 [^1]: Or BFloat16 with normalization and RoPE layers in Float32.
 
