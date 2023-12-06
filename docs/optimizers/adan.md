@@ -21,6 +21,10 @@ optimi’s implementation of Adan also supports [fully decoupled weight decay](.
 
 ::: optimi.adan.Adan
 
+??? note "Note: Adan in bfloat16 is Noisier then Other Optimizers"
+
+    Even with Kahan summation, training with Adan in bfloat16 results in noisier updates relative to float32 or mixed precision training than other optimizers.
+
 ## Algorithm
 
 Adan: Adaptive Nesterov Momentum.
