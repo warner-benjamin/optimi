@@ -22,7 +22,7 @@ All optimi optimizers have fast [foreach implementations](https://optimi.benjami
 
 ## Documentation
 
-https://optimi.benjaminwarner.dev
+<https://optimi.benjaminwarner.dev>
 
 ## Install
 
@@ -75,11 +75,4 @@ optimi Adam optimizers do not support AMSGrad and SGD does not support Nesterov 
 
 ## Optimizers
 
-optimi implements the following optimizers:
-
-* [Adam](https://optimi.benjaminwarner.dev/optimizers/adam)
-* [AdamW](https://optimi.benjaminwarner.dev/optimizers/adamw)
-* [Adan](https://optimi.benjaminwarner.dev/optimizers/adan)
-* [Lion](https://optimi.benjaminwarner.dev/optimizers/lion)
-* [SGD](https://optimi.benjaminwarner.dev/optimizers/sgd)
-* [StableAdamW](https://optimi.benjaminwarner.dev/optimizers/stableadamw)
+optimi implements the following optimizers: [Adam](https://optimi.benjaminwarner.dev/optimizers/adam), [AdamW](https://optimi.benjaminwarner.dev/optimizers/adamw), [Adan](https://optimi.benjaminwarner.dev/optimizers/adan), [Lion](https://optimi.benjaminwarner.dev/optimizers/lion), [RAdam](https://optimi.benjaminwarner.dev/optimizers/radam), [Ranger](https://optimi.benjaminwarner.dev/optimizers/ranger), [SGD](https://optimi.benjaminwarner.dev/optimizers/sgd), & [StableAdamW](https://optimi.benjaminwarner.dev/optimizers/stableadamw)

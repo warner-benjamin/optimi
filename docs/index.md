@@ -76,11 +76,4 @@ optimi Adam optimizers do not support AMSGrad and SGD does not support Nesterov 
 
 ## Optimizers
 
-optimi implements the following optimizers:
-
-* [Adam](optimizers/adam.md)
-* [AdamW](optimizers/adamw.md)
-* [Adan](optimizers/adan.md)
-* [Lion](optimizers/lion.md)
-* [SGD](optimizers/sgd.md)
-* [StableAdamW](optimizers/stableadamw.md)
+optimi implements the following optimizers: [Adam](optimizers/adam.md), [AdamW](optimizers/adamw.md), [Adan](optimizers/adan.md), [Lion](optimizers/lion.md), [RAdam](optimizers/radam.md), [Ranger](optimizers/ranger.md), [SGD](optimizers/sgd.md), & [StableAdamW](optimizers/stableadamw.md)
