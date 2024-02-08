@@ -22,8 +22,8 @@ def prepare_for_gradient_release(model: Module, optimizer: OptimiOptimizer, igno
             `requires_grad=True`.
         optimizer: Optimizer providing the fused optimizer step during the backward pass. Requires
             optimizer to be initialized with `gradient_release=True`
-        ignore_existing_hooks: If True, will not register post_accumulate_grad_hooks if the model
-            (default: False)
+        ignore_existing_hooks: If True, ignores existing post_accumulate_grad_hooks on parameters
+            and registers gradient release hooks (default: False)
     """
     if not isinstance(optimizer, OptimiOptimizer):
         raise TypeError("`optimizer` must be an instance of `OptimiOptimizer`")
