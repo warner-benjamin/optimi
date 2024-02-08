@@ -144,14 +144,11 @@ def gradient_release(optimizers:dict, dim1:int, dim2:int, dtype:torch.dtype, opt
 
 
     # PyTorch Method: taken from https://pytorch.org/tutorials/intermediate/optimizer_step_in_backward_tutorial.html
+    torch_optimizers = {p: load_optimizer([p], optimizers, optim_name, 0, ftype) for p in m2.parameters()}
+
     pytorch_hooks = []
     for p in m2.parameters():
         pytorch_hooks.append(p.register_post_accumulate_grad_hook(optimizer_hook))
-
-    torch_optimizers = {p: load_optimizer([p], optimizers, optim_name, 0, ftype) for p in m2.parameters()}
-
-    for p in m2.parameters():
-        optimizer_hook(p)
 
 
     # Optimim Method
