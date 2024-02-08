@@ -14,19 +14,27 @@ class OptimiOptimizer(Optimizer):
     """Provides common functionality for optimi optimizers."""
 
     def __init__(self, params: Iterable[Tensor] | Iterable[dict], defaults: dict[str, Any]):
+        if not 0.0 <= defaults["lr"]:
+            raise ValueError(f"Invalid learning rate: lr={defaults['lr']}")
+        if not 0.0 <= defaults["weight_decay"]:
+            raise ValueError(f"Invalid weight decay: weight_decay={defaults['weight_decay']}")
+        if defaults["decouple_lr"] and defaults["max_lr"] is None:
+            defaults["max_lr"] = defaults["lr"]
+        if defaults["max_lr"] is not None and not 0.0 <= defaults["max_lr"]:
+            raise ValueError(f"Invalid maximum learning rate: max_lr={defaults['max_lr']}")
+
         if not MIN_TORCH_2_1:
             if defaults["foreach"]:
-                foreach = defaults["foreach"]
-                raise ValueError(f"{foreach=} requires PyTorch 2.1 or later. Set foreach=False or upgrade PyTorch.")
+                raise ValueError(f"foreach={defaults['foreach']} requires PyTorch 2.1 or later. Set foreach=False or upgrade PyTorch.")
             else:
                 defaults["foreach"] = False
+            if defaults["gradient_release"]:
+                raise ValueError(f"gradient_release={defaults['gradient_release']} requires PyTorch 2.1 or later. Upgrade PyTorch to use.")
 
         if defaults["decouple_lr"] and defaults["weight_decay"] >= 1e-3:
-            weight_decay = defaults["weight_decay"]
-            decouple_lr = defaults["decouple_lr"]
             warn(
-                f"You are using {weight_decay=} which is potentially high for {decouple_lr=}. Unlike decoupled weight "
-                f"decay, fully decoupled weight decay does not reduce weight decay by the learning rate.",
+                f"You are using weight_decay={defaults['weight_decay']} which is potentially high for decouple_lr={defaults['decouple_lr']}"
+                f". Unlike decoupled weight decay, fully decoupled weight decay does not reduce weight decay by the learning rate.",
                 category=UserWarning,
             )
 
