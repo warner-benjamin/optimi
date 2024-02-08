@@ -16,7 +16,6 @@
 from __future__ import annotations
 
 from typing import Any, Callable, Iterable
-from warnings import warn
 
 import torch
 from torch import Tensor
@@ -24,7 +23,6 @@ from torch.optim.optimizer import _default_to_fused_or_foreach
 from torch.utils._foreach_utils import _group_tensors_by_device_and_dtype
 
 from optimi.optimizer import OptimiOptimizer
-from optimi.utils import MIN_TORCH_2_1
 
 __all__ = ["SGD", "sgd"]
 
