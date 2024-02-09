@@ -40,6 +40,9 @@ class AdamW(Adam):
             parameters (default: None)
         foreach: Enables the foreach implementation. If unspecified, tries to use foreach over
             for-loop implementation since it is significantly faster (default: None)
+        gradient_release: Fuses optimizer step and zero_grad as part of the parameter's backward
+            pass. Requires model hooks created with `register_gradient_release`. Incompatible with
+            closure (default: False)
     """
 
     def __init__(
@@ -53,6 +56,7 @@ class AdamW(Adam):
         max_lr: float | None = None,
         kahan_sum: bool | None = None,
         foreach: bool | None = None,
+        gradient_release: bool = False,
     ):
         super().__init__(
             params=params,
@@ -65,6 +69,7 @@ class AdamW(Adam):
             max_lr=max_lr,
             kahan_sum=kahan_sum,
             foreach=foreach,
+            gradient_release=gradient_release,
         )
 
 
@@ -85,6 +90,7 @@ def adamw(
     max_lr: float | None = None,
     kahan_sum: bool = False,
     foreach: bool = False,
+    gradient_release: bool = False,
 ):
     """Functional API to apply an AdamW optimization step.
 
@@ -106,6 +112,7 @@ def adamw(
         max_lr: Maximum scheduled learning rate for `decouple_lr`
         kahan_sum: Enables Kahan summation for low precision `params`
         foreach: Enables the faster foreach implementation
+        gradient_release: Fuses optimizer step as part of the parameter's backward pass
     """
     adam(
         params=params,
@@ -124,4 +131,5 @@ def adamw(
         max_lr=max_lr,
         kahan_sum=kahan_sum,
         foreach=foreach,
+        gradient_release=gradient_release,
     )
