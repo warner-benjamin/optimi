@@ -67,6 +67,8 @@ class Adam(OptimiOptimizer):
             raise ValueError(f"Invalid beta1 parameter: {betas[0]=}")
         if not 0.0 <= betas[1] < 1.0:
             raise ValueError(f"Invalid beta2 parameter: {betas[1]=}")
+        if not 0.0 <= eps:
+            raise ValueError(f"Invalid epsilon: {eps=}")
 
         defaults = dict(
             lr=lr,
@@ -189,7 +191,7 @@ class Adam(OptimiOptimizer):
                 decouple_lr=group["decouple_lr"],
                 max_lr=group["max_lr"],
                 kahan_sum=group["kahan_sum"],
-                foreach=group["foreach"],
+                foreach=False,
                 gradient_release=True,
             )
 

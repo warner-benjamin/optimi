@@ -192,7 +192,7 @@ class StableAdamW(OptimiOptimizer):
                 decouple_lr=group["decouple_lr"],
                 max_lr=group["max_lr"],
                 kahan_sum=group["kahan_sum"],
-                foreach=group["foreach"],
+                foreach=False,
                 gradient_release=True,
             )
 
