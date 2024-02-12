@@ -16,19 +16,19 @@
 from __future__ import annotations
 
 from typing import Any, Callable, Iterable
-from warnings import warn
 
 import torch
 from torch import Tensor
-from torch.optim.optimizer import Optimizer, _default_to_fused_or_foreach
+from torch.optim.optimizer import _default_to_fused_or_foreach
 from torch.utils._foreach_utils import _group_tensors_by_device_and_dtype
 
-from optimi.utils import MIN_TORCH_2_1, debias_beta
+from optimi.optimizer import OptimiOptimizer
+from optimi.utils import debias_beta
 
 __all__ = ["Adan", "adan"]
 
 
-class Adan(Optimizer):
+class Adan(OptimiOptimizer):
     """Adan Optimizer: Adaptive Nesterov Momentum Algorithm.
 
     Args:
@@ -50,6 +50,9 @@ class Adan(Optimizer):
             parameters (default: None)
         foreach: Enables the foreach implementation. If unspecified, tries to use foreach over
             for-loop implementation since it is significantly faster (default: None)
+        gradient_release: Fuses optimizer step and zero_grad as part of the parameter's backward
+            pass. Requires model hooks created with `register_gradient_release`. Incompatible with
+            closure (default: False)
     """
 
     def __init__(
@@ -64,34 +67,16 @@ class Adan(Optimizer):
         adam_wd: bool = False,
         kahan_sum: bool | None = False,
         foreach: bool | None = None,
+        gradient_release: bool = False,
     ):
-        if not 0.0 <= lr:
-            raise ValueError(f"Invalid learning rate: {lr=}")
         if not 0.0 <= betas[0] < 1.0:
             raise ValueError(f"Invalid beta1 parameter: {betas[0]=}")
         if not 0.0 <= betas[1] < 1.0:
             raise ValueError(f"Invalid beta2 parameter: {betas[1]=}")
         if not 0.0 <= betas[2] < 1.0:
             raise ValueError(f"Invalid beta3 parameter: {betas[2]=}")
-        if not 0.0 <= weight_decay:
-            raise ValueError(f"Invalid weight decay: {weight_decay=}")
         if not 0.0 <= eps:
             raise ValueError(f"Invalid epsilon: {eps=}")
-        if decouple_lr and max_lr is None:
-            max_lr = lr
-        if max_lr is not None and not 0.0 <= max_lr:
-            raise ValueError(f"Invalid maximum learning rate: {max_lr=}")
-        if decouple_lr and weight_decay >= 1e-3:
-            warn(
-                f"You are using {weight_decay=} which is potentially high for {decouple_lr=}. Unlike decoupled weight "
-                f"decay, fully decoupled weight decay does not reduce weight decay by the learning rate.",
-                category=UserWarning,
-            )
-        if not MIN_TORCH_2_1:
-            if foreach:
-                raise ValueError(f"{foreach=} requires PyTorch 2.1 or later. Set foreach=False or upgrade PyTorch.")
-            else:
-                foreach = False
 
         defaults = dict(
             lr=lr,
@@ -105,9 +90,26 @@ class Adan(Optimizer):
             adam_wd=adam_wd,
             kahan_sum=kahan_sum,
             foreach=foreach,
+            gradient_release=gradient_release,
             setup=False,
         )
         super().__init__(params, defaults)
+
+    def _init_state(self, group: dict[str, Any], state: dict[Tensor, Any], param: Tensor, gradient_release: bool = False):
+        if len(state) <= 1:
+            state["exp_avg"] = torch.zeros_like(param, memory_format=torch.preserve_format)
+            state["exp_avg_diff"] = torch.zeros_like(param, memory_format=torch.preserve_format)
+            state["exp_avg_sq"] = torch.zeros_like(param, memory_format=torch.preserve_format)
+            state["prev_grad"] = param.grad.clone().mul_(-1)
+
+            if (group["kahan_sum"] or group["kahan_sum"] is None) and param.dtype in [torch.float16, torch.bfloat16]:
+                state["kahan_comp"] = torch.zeros_like(param, memory_format=torch.preserve_format)
+                group["kahan_sum"] = True
+            else:
+                state["kahan_comp"] = None
+
+            if gradient_release:
+                state["step"] = torch.tensor(0, dtype=torch.int32)
 
     def _init_group(
         self,
@@ -128,18 +130,7 @@ class Adan(Optimizer):
             grads.append(p.grad)
             state = self.state[p]
 
-            # State initialization
-            if len(state) == 0:
-                state["exp_avg"] = torch.zeros_like(p, memory_format=torch.preserve_format)
-                state["exp_avg_diff"] = torch.zeros_like(p, memory_format=torch.preserve_format)
-                state["exp_avg_sq"] = torch.zeros_like(p, memory_format=torch.preserve_format)
-                state["prev_grad"] = p.grad.clone().mul_(-1)
-
-                if (group["kahan_sum"] or group["kahan_sum"] is None) and p.dtype in [torch.float16, torch.bfloat16]:
-                    state["kahan_comp"] = torch.zeros_like(p, memory_format=torch.preserve_format)
-                    group["kahan_sum"] = True
-                else:
-                    state["kahan_comp"] = None
+            self._init_state(group, state, p)
 
             exp_avgs.append(state["exp_avg"])
             exp_avg_diffs.append(state["exp_avg_diff"])
@@ -158,41 +149,73 @@ class Adan(Optimizer):
                 group["adam_wd"] = False
 
     @torch.no_grad()
-    def step(self, closure: Callable | None = None):
-        """Performs a single optimization step.
+    def step(self, closure: Callable | None = None, param: Tensor | None = None):
+        """Performs a single optimization step on the whole model or individual parameter.
 
         Args:
-            closure: A closure which reevaluates the model and returns the loss
+            closure: A closure which reevaluates the model and returns the loss. Incompatible with
+                performing an optimization step on a single `param`.
+            param: An individual parameter to perform a fused optimization step during the backward
+                pass. Requires optimizer to be initialized with `gradient_release=True` and model
+                hooks created with `register_gradient_release`. Incompatible with `closure`.
         """
         loss = None
-        if closure is not None:
+        if closure is not None and param is None:
             with torch.enable_grad():
                 loss = closure()
 
-        for group in self.param_groups:
-            params, grads, exp_avgs, exp_avg_diffs, exp_avg_sqs = [], [], [], [], []
-            prev_grads, kahan_comps = [], []
-            self._init_group(group, params, grads, exp_avgs, exp_avg_diffs, exp_avg_sqs, prev_grads, kahan_comps)
+        if param is None:
+            for group in self.param_groups:
+                params, grads, exp_avgs, exp_avg_diffs, exp_avg_sqs = [], [], [], [], []
+                prev_grads, kahan_comps = [], []
+                self._init_group(group, params, grads, exp_avgs, exp_avg_diffs, exp_avg_sqs, prev_grads, kahan_comps)
+
+                adan(
+                    params=params,
+                    grads=grads,
+                    exp_avgs=exp_avgs,
+                    exp_avg_sqs=exp_avg_sqs,
+                    exp_avg_diffs=exp_avg_diffs,
+                    prev_grads=prev_grads,
+                    kahan_comps=kahan_comps,
+                    lr=group["lr"],
+                    beta1=group["beta1"],
+                    beta2=group["beta2"],
+                    beta3=group["beta3"],
+                    eps=group["eps"],
+                    weight_decay=group["weight_decay"],
+                    step=group["step"],
+                    decouple_lr=group["decouple_lr"],
+                    max_lr=group["max_lr"],
+                    kahan_sum=group["kahan_sum"],
+                    foreach=group["foreach"],
+                    gradient_release=False,
+                )
+        else:
+            state = self.state[param]
+            group = state["group"]
+            self._init_state(group, state, param, True)
 
             adan(
-                params=params,
-                grads=grads,
-                exp_avgs=exp_avgs,
-                exp_avg_sqs=exp_avg_sqs,
-                exp_avg_diffs=exp_avg_diffs,
-                prev_grads=prev_grads,
-                kahan_comps=kahan_comps,
+                params=param,
+                grads=param.grad,
+                exp_avgs=state["exp_avg"],
+                exp_avg_sqs=state["exp_avg_sq"],
+                exp_avg_diffs=state["exp_avg_diff"],
+                prev_grads=state["prev_grad"],
+                kahan_comps=state["kahan_comp"],
                 lr=group["lr"],
                 beta1=group["beta1"],
                 beta2=group["beta2"],
                 beta3=group["beta3"],
                 eps=group["eps"],
                 weight_decay=group["weight_decay"],
-                step=group["step"],
+                step=state["step"],
                 decouple_lr=group["decouple_lr"],
                 max_lr=group["max_lr"],
                 kahan_sum=group["kahan_sum"],
-                foreach=group["foreach"],
+                foreach=False,
+                gradient_release=True,
             )
 
         return loss
@@ -219,6 +242,7 @@ def adan(
     adam_wd: bool = False,
     kahan_sum: bool = False,
     foreach: bool = False,
+    gradient_release: bool = False,
 ):
     """Functional API to apply a Adan optimization step.
 
@@ -244,6 +268,7 @@ def adan(
         adam_wd: Apply Adam-style weight decay instead of Adan weight decay
         kahan_sum: Enables Kahan summation for low precision parameters
         foreach: Enables the faster foreach implementation
+        gradient_release: Fuses optimizer step as part of the parameter's backward pass
     """
     # calculate debiased beta hat & complement terms
     step.add_(1)
@@ -268,17 +293,19 @@ def adan(
 
     if foreach:
         func = _foreach_adan
+    elif gradient_release:
+        func = _single_param_adan
     else:
         func = _single_adan
 
     func(
-        params=params,
-        grads=grads,
-        exp_avgs=exp_avgs,
-        exp_avg_diffs=exp_avg_diffs,
-        exp_avg_sqs=exp_avg_sqs,
-        prev_grads=prev_grads,
-        kahan_comps=kahan_comps,
+        params,
+        grads,
+        exp_avgs,
+        exp_avg_diffs,
+        exp_avg_sqs,
+        prev_grads,
+        kahan_comps,
         lr=lr,
         beta2=beta2,
         beta1_comp=beta1_comp,
@@ -318,48 +345,87 @@ def _single_adan(
         prev_grad = prev_grads[i]
         kahan_comp = kahan_comps[i]
 
-        # difference between current & previous gradients, prev_grad is negated in last step
-        prev_grad.add_(grad)
+        _single_param_adan(
+            param=param,
+            grad=grad,
+            exp_avg=exp_avg,
+            exp_avg_diff=exp_avg_diff,
+            exp_avg_sq=exp_avg_sq,
+            prev_grad=prev_grad,
+            kahan_comp=kahan_comp,
+            lr=lr,
+            beta2=beta2,
+            beta1_comp=beta1_comp,
+            beta2_comp=beta2_comp,
+            beta3_hat=beta3_hat,
+            eps=eps,
+            weight_decay=weight_decay,
+            adam_wd=adam_wd,
+            kahan_sum=kahan_sum,
+        )
 
-        # update m_k with debiased beta
-        exp_avg.lerp_(grad, weight=beta1_comp)
 
-        # update v_k with debiased beta
-        exp_avg_diff.lerp_(prev_grad, weight=beta2_comp)
+def _single_param_adan(
+    param: Tensor,
+    grad: Tensor,
+    exp_avg: Tensor,
+    exp_avg_diff: Tensor,
+    exp_avg_sq: Tensor,
+    prev_grad: Tensor,
+    kahan_comp: Tensor | None,
+    *,
+    lr: float,
+    beta2: float,
+    beta1_comp: float,
+    beta2_comp: float,
+    beta3_hat: float,
+    eps: float,
+    weight_decay: float,
+    adam_wd: bool,
+    kahan_sum: bool = False,
+):
+    # difference between current & previous gradients, prev_grad is negated in last step
+    prev_grad.add_(grad)
 
-        # update n_k with original & debiased betas
-        prev_grad.mul_(beta2).add_(grad)
-        exp_avg_sq.mul_(beta3_hat).addcmul_(prev_grad, prev_grad, value=1 - beta3_hat)
+    # update m_k with debiased beta
+    exp_avg.lerp_(grad, weight=beta1_comp)
 
-        # set next step's prior_grad as negated current grad
-        prev_grad.copy_(grad).mul_(-1)
+    # update v_k with debiased beta
+    exp_avg_diff.lerp_(prev_grad, weight=beta2_comp)
 
-        # calculate 1/η_k using prev_grad as buffer. LR is multiplied in Adan step
-        denom = exp_avg_sq.sqrt().add_(eps)
+    # update n_k with original & debiased betas
+    prev_grad.mul_(beta2).add_(grad)
+    exp_avg_sq.mul_(beta3_hat).addcmul_(prev_grad, prev_grad, value=1 - beta3_hat)
 
-        # Adam-style weight decay
-        if adam_wd and weight_decay != 0:
-            param.mul_(weight_decay)
+    # set next step's prior_grad as negated current grad
+    prev_grad.copy_(grad).mul_(-1)
 
-        if kahan_sum and param.dtype in [torch.float16, torch.bfloat16]:
-            # Adan step
-            kahan_comp.addcdiv_(exp_avg, denom, value=-lr)
-            kahan_comp.addcdiv_(exp_avg_diff, denom, value=-lr * beta2)
+    # calculate 1/η_k using prev_grad as buffer. LR is multiplied in Adan step
+    denom = exp_avg_sq.sqrt().add_(eps)
 
-            # update weights with kahan compensation using grad as temp buffer
-            grad.copy_(param.detach())
-            param.add_(kahan_comp)
+    # Adam-style weight decay
+    if adam_wd and weight_decay != 0:
+        param.mul_(weight_decay)
 
-            # save error back to kahan compensation for next iteration
-            kahan_comp.add_(grad.sub_(param))
-        else:
-            # Adan step
-            param.addcdiv_(exp_avg, denom, value=-lr)
-            param.addcdiv_(exp_avg_diff, denom, value=-lr * beta2)
+    if kahan_sum and param.dtype in [torch.float16, torch.bfloat16]:
+        # Adan step
+        kahan_comp.addcdiv_(exp_avg, denom, value=-lr)
+        kahan_comp.addcdiv_(exp_avg_diff, denom, value=-lr * beta2)
 
-        # Adan-style weight decay
-        if not adam_wd and weight_decay != 0:
-            param.div_(weight_decay)
+        # update weights with kahan compensation using grad as temp buffer
+        grad.copy_(param.detach())
+        param.add_(kahan_comp)
+
+        # save error back to kahan compensation for next iteration
+        kahan_comp.add_(grad.sub_(param))
+    else:
+        # Adan step
+        param.addcdiv_(exp_avg, denom, value=-lr)
+        param.addcdiv_(exp_avg_diff, denom, value=-lr * beta2)
+
+    # Adan-style weight decay
+    if not adam_wd and weight_decay != 0:
+        param.div_(weight_decay)
 
 
 def _foreach_adan(
