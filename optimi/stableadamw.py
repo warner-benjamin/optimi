@@ -84,7 +84,7 @@ class StableAdamW(OptimiOptimizer):
         )
         super().__init__(params, defaults)
 
-    def _init_state(self, group: dict[str, Any], state: dict[Tensor, Any], param: Tensor, gradient_release: bool = False):
+    def _init_state(self, group: dict[str, Any], state: dict[Tensor, Any], param: Tensor):
         if len(state) <= 1:
             state["exp_avg"] = torch.zeros_like(param, memory_format=torch.preserve_format)
             state["exp_avg_sq"] = torch.zeros_like(param, memory_format=torch.preserve_format)
@@ -96,7 +96,7 @@ class StableAdamW(OptimiOptimizer):
             else:
                 state["kahan_comp"] = None
 
-            if gradient_release:
+            if group["gradient_release"]:
                 state["step"] = torch.tensor(0, dtype=torch.int32)
 
     def _init_group(
@@ -174,7 +174,7 @@ class StableAdamW(OptimiOptimizer):
         else:
             state = self.state[param]
             group = state["group"]
-            self._init_state(group, state, param, True)
+            self._init_state(group, state, param)
 
             stableadamw(
                 params=param,
