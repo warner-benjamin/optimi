@@ -23,15 +23,15 @@ class MLP(torch.nn.Module):
         return x
 
 
-def assert_most_approx_close(a, b, rtol=1e-3, atol=1e-3, max_error_count=0, max_error_rate=None):
+def assert_most_approx_close(a, b, rtol=1e-3, atol=1e-3, max_error_count=0, max_error_rate=None, name=''):
     idx = torch.isclose(a, b, rtol=rtol, atol=atol)
     error_count = (idx == 0).sum().item()
     if max_error_rate is not None:
         if error_count > (a.shape[0] * a.shape[1]) * max_error_rate and error_count > max_error_count:
-            print(f"Too many values not close: assert {error_count} < {(a.shape[0] * a.shape[1]) * max_error_rate}")
+            print(f"{name}Too many values not close: assert {error_count} < {(a.shape[0] * a.shape[1]) * max_error_rate}")
             torch.testing.assert_close(a, b, rtol=rtol, atol=atol)
     elif error_count > max_error_count:
-        print(f"Too many values not close: assert {error_count} < {max_error_count}")
+        print(f"{name}Too many values not close: assert {error_count} < {max_error_count}")
         torch.testing.assert_close(a, b, rtol=rtol, atol=atol)
 
 
@@ -122,7 +122,7 @@ def run_optimizer(optimizers:dict, dim1:int, dim2:int, gtype:torch.dtype, optim_
 
 
 def gradient_release(optimizers:dict, dim1:int, dim2:int, dtype:torch.dtype, optim_name:str,
-                    ftype:str, device:torch.device, iterations:int=20, framework_opt_step:bool=False):
+                     ftype:str, device:torch.device, iterations:int=20, framework_opt_step:bool=False):
     def optimizer_hook(parameter) -> None:
         torch_optimizers[parameter].step()
         torch_optimizers[parameter].zero_grad()
@@ -192,10 +192,10 @@ def gradient_release(optimizers:dict, dim1:int, dim2:int, dtype:torch.dtype, opt
             optimi_optimizer.step()
             optimi_optimizer.zero_grad()
 
-        assert_most_approx_close(m1.fc1.weight, m2.fc1.weight, rtol=rtol, atol=atol, max_error_count=max_error_count)
-        assert_most_approx_close(m1.fc2.weight, m2.fc2.weight, rtol=rtol, atol=atol, max_error_count=max_error_count)
-        assert_most_approx_close(m1.fc1.weight, m3.fc1.weight, rtol=rtol, atol=atol, max_error_count=max_error_count)
-        assert_most_approx_close(m1.fc2.weight, m3.fc2.weight, rtol=rtol, atol=atol, max_error_count=max_error_count)
+        assert_most_approx_close(m1.fc1.weight, m2.fc1.weight, rtol=rtol, atol=atol, max_error_count=max_error_count, name='PyTorch-PyTorch: ')
+        assert_most_approx_close(m1.fc2.weight, m2.fc2.weight, rtol=rtol, atol=atol, max_error_count=max_error_count, name='PyTorch-PyTorch: ')
+        assert_most_approx_close(m1.fc1.weight, m3.fc1.weight, rtol=rtol, atol=atol, max_error_count=max_error_count, name='PyTorch-Optimi: ')
+        assert_most_approx_close(m1.fc2.weight, m3.fc2.weight, rtol=rtol, atol=atol, max_error_count=max_error_count, name='PyTorch-Optimi: ')
 
     for h in pytorch_hooks:
         h.remove()
