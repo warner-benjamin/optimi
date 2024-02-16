@@ -40,8 +40,11 @@ class OptimiOptimizer(Optimizer):
 
         super().__init__(params, defaults)
 
+        # if gradient_release is enabled, disable foreach step so normal optimizer step won't error
         if self.defaults["gradient_release"]:
+            self.defaults["foreach"] = False
             for group in self.param_groups:
+                group["foreach"] = False
                 for p in group["params"]:
                     self.state[p]["group"] = group
 
