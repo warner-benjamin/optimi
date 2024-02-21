@@ -57,6 +57,33 @@ Calculating the total memory savings depends on [activations and batch size](htt
 
 Training in BFloat16 instead of mixed precision results in a ~10% speedup on a single GPU at the same batch size. BFloat16 training can further increase distributed training speed due to the halved bandwidth cost.
 
+## Example
+
+Using Kahan summation with an optimi optimizer only requires a casting a model and optionally input into low precision (BFloat16 or Float16). Since Kahan summation is applied layer by layer, it works for models with standard and low precision weights.
+
+```python
+import torch
+from torch import nn
+from optimi import AdamW
+
+# create or cast some model layers in low precision (bfloat16)
+model = nn.Linear(20, 1, dtype=torch.bfloat16)
+
+# initialize any optmi optimizer with low precsion parameters
+# Kahan summation is enabled since some model layers are bfloat16
+opt = AdamW(model.parameters(), lr=1e-3)
+
+# forward and backward, casting input to bfloat16 if needed
+loss = model(torch.randn(20, dtype=torch.bfloat16))
+loss.backward()
+
+# optimizer step automatically uses Kahan summation for low precision layers
+opt.step()
+opt.zero_grad()
+```
+
+To disable Kahan Summation pass `kahan_summation=False` on optimizer initialiation.
+
 ## Algorithm
 
 SGD with Kahan summation.

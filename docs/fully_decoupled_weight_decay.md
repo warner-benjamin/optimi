@@ -28,6 +28,28 @@ For example, to match [AdamW’s](optimizers/adamw.md) default decoupled weight 
 
 By default, optimi optimizers assume `lr` is the maximum scheduled learning rate. This allows the applied weight decay $(\gamma_t/\gamma_\text{max})\lambda\bm{\theta}_{t-1}$ to match the learning rate schedule. Set `max_lr` if this is not the case.
 
+## Example
+
+```python
+import torch
+from torch import nn
+from optimi import AdamW
+
+# create model
+model = nn.Linear(20, 1, dtype=torch.bfloat16)
+
+# initialize any optimi optimizer useing `decouple_lr=True` to enable fully
+# decoupled weight decay. note `weight_decay` is lower then the default of 1e-2
+opt = AdamW(model.parameters(), lr=1e-3, weight_decay=1e-5, decouple_lr=True)
+
+# model is optimized using fully decoupled weight decay
+loss = model(torch.randn(20, dtype=torch.bfloat16))
+loss.backward()
+
+opt.step()
+opt.zero_grad()
+```
+
 ## Algorithm
 
 The algorithm below shows the difference between PyTorch’s AdamW and optimi’s Adam with fully decoupled weight decay.
