@@ -13,19 +13,19 @@
 from __future__ import annotations
 
 from typing import Any, Callable, Iterable
-from warnings import warn
 
 import torch
 from torch import Tensor
-from torch.optim.optimizer import Optimizer, _default_to_fused_or_foreach
+from torch.optim.optimizer import _default_to_fused_or_foreach
 from torch.utils._foreach_utils import _group_tensors_by_device_and_dtype
 
-from optimi.utils import MIN_TORCH_2_1, debias_beta
+from optimi.optimizer import OptimiOptimizer
+from optimi.utils import debias_beta
 
 __all__ = ["StableAdamW", "stableadamw"]
 
 
-class StableAdamW(Optimizer):
+class StableAdamW(OptimiOptimizer):
     """StableAdamW optimizer. An AdamW-Adafactor hybrid with learning rate update clipping.
 
     Args:
@@ -44,6 +44,9 @@ class StableAdamW(Optimizer):
             parameters (default: None)
         foreach: Enables the foreach implementation. If unspecified, tries to use foreach over
             for-loop implementation since it is significantly faster (default: None)
+        gradient_release: Fuses optimizer step and zero_grad as part of the parameter's backward
+            pass. Requires model hooks created with `register_gradient_release`. Incompatible with
+            closure (default: False)
     """
 
     def __init__(
@@ -57,32 +60,14 @@ class StableAdamW(Optimizer):
         max_lr: float | None = None,
         kahan_sum: bool | None = None,
         foreach: bool | None = None,
+        gradient_release: bool = False,
     ):
-        if not 0.0 <= lr:
-            raise ValueError(f"Invalid learning rate: {lr=}")
         if not 0.0 <= betas[0] < 1.0:
             raise ValueError(f"Invalid beta1 parameter: {betas[0]=}")
         if not 0.0 <= betas[1] < 1.0:
             raise ValueError(f"Invalid beta2 parameter: {betas[1]=}")
-        if not 0.0 <= weight_decay:
-            raise ValueError(f"Invalid weight decay: {weight_decay=}")
         if not 0.0 <= eps:
             raise ValueError(f"Invalid epsilon: {eps=}")
-        if decouple_lr and max_lr is None:
-            max_lr = lr
-        if max_lr is not None and not 0.0 <= max_lr:
-            raise ValueError(f"Invalid maximum learning rate: {max_lr=}")
-        if decouple_lr and weight_decay >= 1e-3:
-            warn(
-                f"You are using {weight_decay=} which is potentially high for {decouple_lr=}. Unlike decoupled weight "
-                f"decay, fully decoupled weight decay does not reduce weight decay by the learning rate.",
-                category=UserWarning,
-            )
-        if not MIN_TORCH_2_1:
-            if foreach:
-                raise ValueError(f"{foreach=} requires PyTorch 2.1 or later. Set foreach=False or upgrade PyTorch.")
-            else:
-                foreach = False
 
         defaults = dict(
             lr=lr,
@@ -94,9 +79,25 @@ class StableAdamW(Optimizer):
             max_lr=max_lr,
             kahan_sum=kahan_sum,
             foreach=foreach,
+            gradient_release=gradient_release,
             setup=False,
         )
         super().__init__(params, defaults)
+
+    def _init_state(self, group: dict[str, Any], state: dict[Tensor, Any], param: Tensor):
+        if len(state) <= 1:
+            state["exp_avg"] = torch.zeros_like(param, memory_format=torch.preserve_format)
+            state["exp_avg_sq"] = torch.zeros_like(param, memory_format=torch.preserve_format)
+            state["eps_sq"] = torch.tensor(group["eps"] ** 2, dtype=param.dtype, device=param.device)
+
+            if (group["kahan_sum"] or group["kahan_sum"] is None) and param.dtype in [torch.float16, torch.bfloat16]:
+                state["kahan_comp"] = torch.zeros_like(param, memory_format=torch.preserve_format)
+                group["kahan_sum"] = True
+            else:
+                state["kahan_comp"] = None
+
+            if group["gradient_release"]:
+                state["step"] = torch.tensor(0, dtype=torch.int32)
 
     def _init_group(
         self,
@@ -116,17 +117,7 @@ class StableAdamW(Optimizer):
             grads.append(p.grad)
             state = self.state[p]
 
-            # State initialization
-            if len(state) == 0:
-                state["exp_avg"] = torch.zeros_like(p, memory_format=torch.preserve_format)
-                state["exp_avg_sq"] = torch.zeros_like(p, memory_format=torch.preserve_format)
-                state["eps_sq"] = torch.tensor(group["eps"] ** 2, dtype=p.dtype, device=p.device)
-
-                if (group["kahan_sum"] or group["kahan_sum"] is None) and p.dtype in [torch.float16, torch.bfloat16]:
-                    state["kahan_comp"] = torch.zeros_like(p, memory_format=torch.preserve_format)
-                    group["kahan_sum"] = True
-                else:
-                    state["kahan_comp"] = None
+            self._init_state(group, state, p)
 
             exp_avgs.append(state["exp_avg"])
             exp_avg_sqs.append(state["exp_avg_sq"])
@@ -141,38 +132,68 @@ class StableAdamW(Optimizer):
                 _, group["foreach"] = _default_to_fused_or_foreach(params, False, False)
 
     @torch.no_grad()
-    def step(self, closure: Callable | None = None):
-        """Performs a single optimization step.
+    def step(self, closure: Callable | None = None, param: Tensor | None = None):
+        """Performs a single optimization step on the whole model or individual parameter.
 
         Args:
-            closure: A closure which reevaluates the model and returns the loss
+            closure: A closure which reevaluates the model and returns the loss. Incompatible with
+                performing an optimization step on a single `param`.
+            param: An individual parameter to perform a fused optimization step during the backward
+                pass. Requires optimizer to be initialized with `gradient_release=True` and model
+                hooks created with `register_gradient_release`. Incompatible with `closure`.
         """
         loss = None
-        if closure is not None:
+        if closure is not None and param is None:
             with torch.enable_grad():
                 loss = closure()
 
-        for group in self.param_groups:
-            params, grads, exp_avgs, exp_avg_sqs, eps_sqs, kahan_comps = [], [], [], [], [], []
-            self._init_group(group, params, grads, exp_avgs, exp_avg_sqs, eps_sqs, kahan_comps)
+        if param is None:
+            for group in self.param_groups:
+                params, grads, exp_avgs, exp_avg_sqs, eps_sqs, kahan_comps = [], [], [], [], [], []
+                self._init_group(group, params, grads, exp_avgs, exp_avg_sqs, eps_sqs, kahan_comps)
+
+                stableadamw(
+                    params=params,
+                    grads=grads,
+                    exp_avgs=exp_avgs,
+                    exp_avg_sqs=exp_avg_sqs,
+                    eps_sqs=eps_sqs,
+                    kahan_comps=kahan_comps,
+                    lr=group["lr"],
+                    beta1=group["beta1"],
+                    beta2=group["beta2"],
+                    weight_decay=group["weight_decay"],
+                    eps=group["eps"],
+                    step=group["step"],
+                    decouple_lr=group["decouple_lr"],
+                    max_lr=group["max_lr"],
+                    kahan_sum=group["kahan_sum"],
+                    foreach=group["foreach"],
+                    gradient_release=False,
+                )
+        else:
+            state = self.state[param]
+            group = state["group"]
+            self._init_state(group, state, param)
 
             stableadamw(
-                params=params,
-                grads=grads,
-                exp_avgs=exp_avgs,
-                exp_avg_sqs=exp_avg_sqs,
-                eps_sqs=eps_sqs,
-                kahan_comps=kahan_comps,
+                params=param,
+                grads=param.grad,
+                exp_avgs=state["exp_avg"],
+                exp_avg_sqs=state["exp_avg_sq"],
+                eps_sqs=state["eps_sq"],
+                kahan_comps=state["kahan_comp"],
                 lr=group["lr"],
                 beta1=group["beta1"],
                 beta2=group["beta2"],
                 weight_decay=group["weight_decay"],
                 eps=group["eps"],
-                step=group["step"],
+                step=state["step"],
                 decouple_lr=group["decouple_lr"],
                 max_lr=group["max_lr"],
                 kahan_sum=group["kahan_sum"],
-                foreach=group["foreach"],
+                foreach=False,
+                gradient_release=True,
             )
 
         return loss
@@ -196,6 +217,7 @@ def stableadamw(
     max_lr: float | None = None,
     kahan_sum: bool = False,
     foreach: bool = False,
+    gradient_release: bool = False,
 ):
     """Functional API to apply a StableAdamW optimization step.
 
@@ -218,6 +240,7 @@ def stableadamw(
         max_lr: Maximum scheduled learning rate for `decouple_lr`
         kahan_sum: Enables Kahan summation for low precision parameters
         foreach: Enables the faster foreach implementation
+        gradient_release: Fuses optimizer step as part of the parameter's backward pass
     """
     # calculate debiased beta hat & complement terms
     step.add_(1)
@@ -229,16 +252,18 @@ def stableadamw(
 
     if foreach:
         func = _foreach_stableadamw
+    elif gradient_release:
+        func = _single_param_stableadamw
     else:
         func = _single_stableadamw
 
     func(
-        params=params,
-        grads=grads,
-        exp_avgs=exp_avgs,
-        exp_avg_sqs=exp_avg_sqs,
-        eps_sqs=eps_sqs,
-        kahan_comps=kahan_comps,
+        params,
+        grads,
+        exp_avgs,
+        exp_avg_sqs,
+        eps_sqs,
+        kahan_comps,
         lr=lr,
         beta1_comp=beta1_comp,
         beta2_hat=beta2_hat,
@@ -274,37 +299,72 @@ def _single_stableadamw(
         kahan_comp = kahan_comps[i]
         eps_sq = eps_sqs[i]
 
-        # update gradient moving averages with debiased betas
-        exp_avg.lerp_(grad, weight=beta1_comp)
-        exp_avg_sq.mul_(beta2_hat).addcmul_(grad, grad, value=1 - beta2_hat)
+        _single_param_stableadamw(
+            param=param,
+            grad=grad,
+            exp_avg=exp_avg,
+            exp_avg_sq=exp_avg_sq,
+            eps_sq=eps_sq,
+            kahan_comp=kahan_comp,
+            lr=lr,
+            beta1_comp=beta1_comp,
+            beta2_hat=beta2_hat,
+            weight_decay=weight_decay,
+            eps=eps,
+            decouple_lr=decouple_lr,
+            max_lr=max_lr,
+            kahan_sum=kahan_sum,
+        )
 
-        # compute per tensor RMS stabilization term
-        rms = grad.pow(2).div_(exp_avg_sq.maximum(eps_sq)).mean().sqrt()
 
-        # calculate RMS stabilized learning rate
-        lr = lr / max(1, rms.item())
+def _single_param_stableadamw(
+    param: Tensor,
+    grad: Tensor,
+    exp_avg: Tensor,
+    exp_avg_sq: Tensor,
+    eps_sq: Tensor,
+    kahan_comp: Tensor | None,
+    *,
+    lr: float,
+    beta1_comp: float,
+    beta2_hat: float,
+    weight_decay: float,
+    eps: float,
+    decouple_lr: bool,
+    max_lr: float | None = None,
+    kahan_sum: bool = False,
+):
+    # update gradient moving averages with debiased betas
+    exp_avg.lerp_(grad, weight=beta1_comp)
+    exp_avg_sq.mul_(beta2_hat).addcmul_(grad, grad, value=1 - beta2_hat)
 
-        # decoupled weight decay or fully decoupled weight decay
-        if weight_decay != 0:
-            if decouple_lr:
-                weight_decay = 1 - (lr / max_lr) * weight_decay
-            else:
-                weight_decay = 1 - lr * weight_decay
-            param.mul_(weight_decay)
+    # compute per tensor RMS stabilization term
+    rms = grad.pow(2).div_(exp_avg_sq.maximum(eps_sq)).mean().sqrt()
 
-        if kahan_sum and param.dtype in [torch.float16, torch.bfloat16]:
-            # Adam step
-            kahan_comp.addcdiv_(exp_avg, exp_avg_sq.sqrt().add_(eps), value=-lr)
+    # calculate RMS stabilized learning rate
+    lr = lr / max(1, rms.item())
 
-            # update weights with kahan compensation using grad as temp buffer
-            grad.copy_(param.detach())
-            param.add_(kahan_comp)
-
-            # save error back to kahan compensation for next iteration
-            kahan_comp.add_(grad.sub_(param))
+    # decoupled weight decay or fully decoupled weight decay
+    if weight_decay != 0:
+        if decouple_lr:
+            weight_decay = 1 - (lr / max_lr) * weight_decay
         else:
-            # Adam step
-            param.addcdiv_(exp_avg, exp_avg_sq.sqrt().add_(eps), value=-lr)
+            weight_decay = 1 - lr * weight_decay
+        param.mul_(weight_decay)
+
+    if kahan_sum and param.dtype in [torch.float16, torch.bfloat16]:
+        # Adam step
+        kahan_comp.addcdiv_(exp_avg, exp_avg_sq.sqrt().add_(eps), value=-lr)
+
+        # update weights with kahan compensation using grad as temp buffer
+        grad.copy_(param.detach())
+        param.add_(kahan_comp)
+
+        # save error back to kahan compensation for next iteration
+        kahan_comp.add_(grad.sub_(param))
+    else:
+        # Adam step
+        param.addcdiv_(exp_avg, exp_avg_sq.sqrt().add_(eps), value=-lr)
 
 
 def _foreach_stableadamw(

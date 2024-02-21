@@ -13,19 +13,18 @@
 from __future__ import annotations
 
 from typing import Any, Callable, Iterable
-from warnings import warn
 
 import torch
 from torch import Tensor
-from torch.optim.optimizer import Optimizer, _default_to_fused_or_foreach
+from torch.optim.optimizer import _default_to_fused_or_foreach
 from torch.utils._foreach_utils import _group_tensors_by_device_and_dtype
 
-from optimi.utils import MIN_TORCH_2_1
+from optimi.optimizer import OptimiOptimizer
 
 __all__ = ["Lion", "lion"]
 
 
-class Lion(Optimizer):
+class Lion(OptimiOptimizer):
     """Lion optimizer. Evolved Sign Momentum.
 
     Args:
@@ -44,6 +43,9 @@ class Lion(Optimizer):
             parameters (default: None)
         foreach: Enables the foreach implementation. If unspecified, tries to use foreach over
             for-loop implementation since it is significantly faster (default: None)
+        gradient_release: Fuses optimizer step and zero_grad as part of the parameter's backward
+            pass. Requires model hooks created with `register_gradient_release`. Incompatible with
+            closure (default: False)
     """
 
     def __init__(
@@ -56,30 +58,12 @@ class Lion(Optimizer):
         max_lr: float | None = None,
         kahan_sum: bool | None = None,
         foreach: bool | None = None,
+        gradient_release: bool = False,
     ):
-        if not 0.0 <= lr:
-            raise ValueError(f"Invalid learning rate: {lr=}")
         if not 0.0 <= betas[0] < 1.0:
             raise ValueError(f"Invalid beta1 parameter: {betas[0]=}")
         if not 0.0 <= betas[1] < 1.0:
             raise ValueError(f"Invalid beta2 parameter: {betas[1]=}")
-        if not 0.0 <= weight_decay:
-            raise ValueError(f"Invalid weight decay: {weight_decay=}")
-        if decouple_lr and max_lr is None:
-            max_lr = lr
-        if max_lr is not None and not 0.0 <= max_lr:
-            raise ValueError(f"Invalid maximum learning rate: {max_lr=}")
-        if decouple_lr and weight_decay >= 1e-3:
-            warn(
-                f"You are using {weight_decay=} which is potentially high for {decouple_lr=}. Unlike decoupled weight "
-                f"decay, fully decoupled weight decay does not reduce weight decay by the learning rate.",
-                category=UserWarning,
-            )
-        if not MIN_TORCH_2_1:
-            if foreach:
-                raise ValueError(f"{foreach=} requires PyTorch 2.1 or later. Set foreach=False or upgrade PyTorch.")
-            else:
-                foreach = False
 
         defaults = dict(
             lr=lr,
@@ -90,9 +74,20 @@ class Lion(Optimizer):
             max_lr=max_lr,
             kahan_sum=kahan_sum,
             foreach=foreach,
+            gradient_release=gradient_release,
             setup=False,
         )
         super().__init__(params, defaults)
+
+    def _init_state(self, group: dict[str, Any], state: dict[Tensor, Any], param: Tensor):
+        if len(state) <= 1:
+            state["exp_avg"] = torch.zeros_like(param, memory_format=torch.preserve_format)
+
+            if (group["kahan_sum"] or group["kahan_sum"] is None) and param.dtype in [torch.float16, torch.bfloat16]:
+                state["kahan_comp"] = torch.zeros_like(param, memory_format=torch.preserve_format)
+                group["kahan_sum"] = True
+            else:
+                state["kahan_comp"] = None
 
     def _init_group(
         self, group: dict[str, Any], params: list[Tensor], grads: list[Tensor], exp_avgs: list[Tensor], kahan_comps: list[Tensor]
@@ -105,15 +100,7 @@ class Lion(Optimizer):
             grads.append(p.grad)
             state = self.state[p]
 
-            # State initialization
-            if len(state) == 0:
-                state["exp_avg"] = torch.zeros_like(p, memory_format=torch.preserve_format)
-
-                if (group["kahan_sum"] or group["kahan_sum"] is None) and p.dtype in [torch.float16, torch.bfloat16]:
-                    state["kahan_comp"] = torch.zeros_like(p, memory_format=torch.preserve_format)
-                    group["kahan_sum"] = True
-                else:
-                    state["kahan_comp"] = None
+            self._init_state(group, state, p)
 
             exp_avgs.append(state["exp_avg"])
             kahan_comps.append(state["kahan_comp"])
@@ -125,26 +112,51 @@ class Lion(Optimizer):
                 _, group["foreach"] = _default_to_fused_or_foreach(params, False, False)
 
     @torch.no_grad()
-    def step(self, closure: Callable | None = None):
-        """Performs a single optimization step.
+    def step(self, closure: Callable | None = None, param: Tensor | None = None):
+        """Performs a single optimization step on the whole model or individual parameter.
 
         Args:
-            closure: A closure which reevaluates the model and returns the loss
+            closure: A closure which reevaluates the model and returns the loss. Incompatible with
+                performing an optimization step on a single `param`.
+            param: An individual parameter to perform a fused optimization step during the backward
+                pass. Requires optimizer to be initialized with `gradient_release=True` and model
+                hooks created with `register_gradient_release`. Incompatible with `closure`.
         """
         loss = None
-        if closure is not None:
+        if closure is not None and param is None:
             with torch.enable_grad():
                 loss = closure()
 
-        for group in self.param_groups:
-            params, grads, exp_avgs, kahan_comps = [], [], [], []
-            self._init_group(group, params, grads, exp_avgs, kahan_comps)
+        if param is None:
+            for group in self.param_groups:
+                params, grads, exp_avgs, kahan_comps = [], [], [], []
+                self._init_group(group, params, grads, exp_avgs, kahan_comps)
+
+                lion(
+                    params=params,
+                    grads=grads,
+                    exp_avgs=exp_avgs,
+                    kahan_comps=kahan_comps,
+                    lr=group["lr"],
+                    beta1=group["beta1"],
+                    beta2=group["beta2"],
+                    weight_decay=group["weight_decay"],
+                    decouple_lr=group["decouple_lr"],
+                    max_lr=group["max_lr"],
+                    kahan_sum=group["kahan_sum"],
+                    foreach=group["foreach"],
+                    gradient_release=False,
+                )
+        else:
+            state = self.state[param]
+            group = state["group"]
+            self._init_state(group, state, param)
 
             lion(
-                params=params,
-                grads=grads,
-                exp_avgs=exp_avgs,
-                kahan_comps=kahan_comps,
+                params=param,
+                grads=param.grad,
+                exp_avgs=state["exp_avg"],
+                kahan_comps=state["kahan_comp"],
                 lr=group["lr"],
                 beta1=group["beta1"],
                 beta2=group["beta2"],
@@ -152,7 +164,8 @@ class Lion(Optimizer):
                 decouple_lr=group["decouple_lr"],
                 max_lr=group["max_lr"],
                 kahan_sum=group["kahan_sum"],
-                foreach=group["foreach"],
+                foreach=False,
+                gradient_release=True,
             )
 
         return loss
@@ -172,6 +185,7 @@ def lion(
     max_lr: float | None = None,
     kahan_sum: bool = False,
     foreach: bool = False,
+    gradient_release: bool = False,
 ):
     """Functional API to apply a Lion optimization step.
 
@@ -190,6 +204,7 @@ def lion(
         max_lr: Maximum scheduled learning rate for `decouple_lr`
         kahan_sum: Enables Kahan summation for low precision `params`
         foreach: Enables the faster foreach implementation
+        gradient_release: Fuses optimizer step as part of the parameter's backward pass
     """
     # calculate decoupled weight decay or fully decoupled weight decay
     if weight_decay != 0:
@@ -207,14 +222,16 @@ def lion(
 
     if foreach:
         func = _foreach_lion
+    elif gradient_release:
+        func = _single_param_lion
     else:
         func = _single_lion
 
     func(
-        params=params,
-        grads=grads,
-        exp_avgs=exp_avgs,
-        kahan_comps=kahan_comps,
+        params,
+        grads,
+        exp_avgs,
+        kahan_comps,
         lr=lr,
         beta1_comp=beta1_comp,
         beta2_comp=beta2_comp,
@@ -240,29 +257,54 @@ def _single_lion(
         exp_avg = exp_avgs[i]
         kahan_comp = kahan_comps[i]
 
-        # decoupled weight decay or fully decoupled weight decay
-        if weight_decay != 0:
-            param.mul_(weight_decay)
+        _single_param_lion(
+            param,
+            grad,
+            exp_avg,
+            kahan_comp,
+            lr=lr,
+            beta1_comp=beta1_comp,
+            beta2_comp=beta2_comp,
+            weight_decay=weight_decay,
+            kahan_sum=kahan_sum,
+        )
 
-        # parameter update value
-        update = exp_avg.lerp(grad, weight=beta1_comp).sign_()
 
-        # update gradient moving average
-        exp_avg.lerp_(grad, weight=beta2_comp)
+def _single_param_lion(
+    param: Tensor,
+    grad: Tensor,
+    exp_avg: Tensor | None,
+    kahan_comp: Tensor | None,
+    *,
+    lr: float,
+    beta1_comp: float,
+    beta2_comp: float,
+    weight_decay: float,
+    kahan_sum: bool = False,
+):
+    # decoupled weight decay or fully decoupled weight decay
+    if weight_decay != 0:
+        param.mul_(weight_decay)
 
-        if kahan_sum and param.dtype in [torch.float16, torch.bfloat16]:
-            # Lion step
-            kahan_comp.add_(update, alpha=-lr)
+    # parameter update value
+    update = exp_avg.lerp(grad, weight=beta1_comp).sign_()
 
-            # update weights with kahan compensation using grad as temp buffer
-            grad.copy_(param.detach())
-            param.add_(kahan_comp)
+    # update gradient moving average
+    exp_avg.lerp_(grad, weight=beta2_comp)
 
-            # save error back to kahan compensation for next iteration
-            kahan_comp.add_(grad.sub_(param))
-        else:
-            # Lion step
-            param.add_(update, alpha=-lr)
+    if kahan_sum and param.dtype in [torch.float16, torch.bfloat16]:
+        # Lion step
+        kahan_comp.add_(update, alpha=-lr)
+
+        # update weights with kahan compensation using grad as temp buffer
+        grad.copy_(param.detach())
+        param.add_(kahan_comp)
+
+        # save error back to kahan compensation for next iteration
+        kahan_comp.add_(grad.sub_(param))
+    else:
+        # Lion step
+        param.add_(update, alpha=-lr)
 
 
 def _foreach_lion(
