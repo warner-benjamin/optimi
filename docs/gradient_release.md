@@ -36,8 +36,8 @@ from optimi import AdamW
 # create or cast model in low precision (bfloat16)
 model = nn.Linear(20, 1, dtype=torch.bfloat16)
 
-# instantiate AdamW with `gradient_release=True` and call
-# `prepare_for_gradient_release` on model and optimizer
+# initialize any optimi optimizer with `gradient_release=True`
+# and call `prepare_for_gradient_release` on model and optimizer
 opt = AdamW(model.parameters(), lr=1e-3, gradient_release=True)
 prepare_for_gradient_release(model, opt)
 
