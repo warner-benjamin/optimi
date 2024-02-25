@@ -36,9 +36,9 @@ $$
         &\hspace{10mm} \bm{v}_t \leftarrow \beta_2 \bm{v}_{t-1} + (1 - \beta_2) \bm{g}^2_t\\[0.5em]
         &\hspace{10mm} \hat{\bm{m}}_t \leftarrow \bm{m}_t/(1 - \beta_1^t)\\
         &\hspace{10mm} \hat{\bm{v}}_t \leftarrow \bm{v}_t/(1 - \beta_2^t)\\[0.5em]
-        &\hspace{10mm} \textcolor{#9a3fe4}{\text{RMS}_t \leftarrow  \sqrt{\mathbb{E[\bm{g}^2_t/\text{max}(\bm{v}_t, \epsilon^2)]}}}\\
-        &\hspace{10mm} \textcolor{#9a3fe4}{\eta_t \leftarrow  \gamma_t/\text{max}(1,\text{RMS}_t)}\\[0.5em]
-        &\hspace{10mm} \bm{\theta}_t \leftarrow \bm{\theta}_{t-1} - \textcolor{#9a3fe4}{\eta_t} \bigl( \hat{\bm{m}}_t / (\sqrt{\hat{\bm{v}}_t} + \epsilon) + \lambda\bm{\theta}_{t-1} \bigr)\\[-0.5em]
+        &\hspace{10mm} \textcolor{#9a3fe4}{\textbf{RMS}_t \leftarrow  \sqrt{\mathbb{E[\bm{g}^2_t/\text{max}(\bm{v}_t, \epsilon^2)]}}}\\
+        &\hspace{10mm} \textcolor{#9a3fe4}{\bm{\eta}_t \leftarrow  \gamma_t/\text{max}(1,\textbf{RMS}_t)}\\[0.5em]
+        &\hspace{10mm} \bm{\theta}_t \leftarrow \bm{\theta}_{t-1} - \textcolor{#9a3fe4}{\bm{\eta}_t} \bigl( \hat{\bm{m}}_t / (\sqrt{\hat{\bm{v}}_t} + \epsilon) + \lambda\bm{\theta}_{t-1} \bigr)\\[-0.5em]
     &\rule{100mm}{0.4pt}\\
 \end{aligned}
 $$
