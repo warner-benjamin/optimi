@@ -190,6 +190,7 @@ class Adan(OptimiOptimizer):
                     kahan_sum=group["kahan_sum"],
                     foreach=group["foreach"],
                     gradient_release=False,
+                    optimizer_accumulation=False,
                 )
         else:
             state = self.state[param]
@@ -216,6 +217,7 @@ class Adan(OptimiOptimizer):
                 kahan_sum=group["kahan_sum"],
                 foreach=False,
                 gradient_release=True,
+                optimizer_accumulation=self._optimizer_accumulation,
             )
 
         return loss
@@ -243,6 +245,7 @@ def adan(
     kahan_sum: bool = False,
     foreach: bool = False,
     gradient_release: bool = False,
+    optimizer_accumulation: bool = False,
 ):
     """Functional API to apply a Adan optimization step.
 
@@ -269,6 +272,7 @@ def adan(
         kahan_sum: Enables Kahan summation for low precision parameters
         foreach: Enables the faster foreach implementation
         gradient_release: Fuses optimizer step as part of the parameter's backward pass
+        optimizer_accumulation: Accumulate gradients into state during gradient release step
     """
     # calculate debiased beta hat & complement terms
     step.add_(1)
@@ -315,6 +319,7 @@ def adan(
         weight_decay=weight_decay,
         adam_wd=adam_wd,
         kahan_sum=kahan_sum,
+        update_parameters=(not optimizer_accumulation),
     )
 
 
@@ -336,6 +341,7 @@ def _single_adan(
     weight_decay: float,
     adam_wd: bool,
     kahan_sum: bool = False,
+    update_parameters: bool = True,
 ):
     for i, param in enumerate(params):
         grad = grads[i]
@@ -362,6 +368,7 @@ def _single_adan(
             weight_decay=weight_decay,
             adam_wd=adam_wd,
             kahan_sum=kahan_sum,
+            update_parameters=update_parameters,
         )
 
 
@@ -383,6 +390,7 @@ def _single_param_adan(
     weight_decay: float,
     adam_wd: bool,
     kahan_sum: bool = False,
+    update_parameters: bool = True,
 ):
     # difference between current & previous gradients, prev_grad is negated in last step
     prev_grad.add_(grad)
@@ -400,32 +408,33 @@ def _single_param_adan(
     # set next step's prior_grad as negated current grad
     prev_grad.copy_(grad).mul_(-1)
 
-    # calculate 1/η_k using prev_grad as buffer. LR is multiplied in Adan step
-    denom = exp_avg_sq.sqrt().add_(eps)
+    if update_parameters:
+        # calculate 1/η_k using prev_grad as buffer. LR is multiplied in Adan step
+        denom = exp_avg_sq.sqrt().add_(eps)
 
-    # Adam-style weight decay
-    if adam_wd and weight_decay != 0:
-        param.mul_(weight_decay)
+        # Adam-style weight decay
+        if adam_wd and weight_decay != 0:
+            param.mul_(weight_decay)
 
-    if kahan_sum and param.dtype in [torch.float16, torch.bfloat16]:
-        # Adan step
-        kahan_comp.addcdiv_(exp_avg, denom, value=-lr)
-        kahan_comp.addcdiv_(exp_avg_diff, denom, value=-lr * beta2)
+        if kahan_sum and param.dtype in [torch.float16, torch.bfloat16]:
+            # Adan step
+            kahan_comp.addcdiv_(exp_avg, denom, value=-lr)
+            kahan_comp.addcdiv_(exp_avg_diff, denom, value=-lr * beta2)
 
-        # update weights with kahan compensation using grad as temp buffer
-        grad.copy_(param.detach())
-        param.add_(kahan_comp)
+            # update weights with kahan compensation using grad as temp buffer
+            grad.copy_(param.detach())
+            param.add_(kahan_comp)
 
-        # save error back to kahan compensation for next iteration
-        kahan_comp.add_(grad.sub_(param))
-    else:
-        # Adan step
-        param.addcdiv_(exp_avg, denom, value=-lr)
-        param.addcdiv_(exp_avg_diff, denom, value=-lr * beta2)
+            # save error back to kahan compensation for next iteration
+            kahan_comp.add_(grad.sub_(param))
+        else:
+            # Adan step
+            param.addcdiv_(exp_avg, denom, value=-lr)
+            param.addcdiv_(exp_avg_diff, denom, value=-lr * beta2)
 
-    # Adan-style weight decay
-    if not adam_wd and weight_decay != 0:
-        param.div_(weight_decay)
+        # Adan-style weight decay
+        if not adam_wd and weight_decay != 0:
+            param.div_(weight_decay)
 
 
 def _foreach_adan(
@@ -446,6 +455,7 @@ def _foreach_adan(
     weight_decay: float,
     adam_wd: bool,
     kahan_sum: bool = False,
+    **kwargs,
 ):
     grouped_tensors = _group_tensors_by_device_and_dtype([params, grads, exp_avgs, exp_avg_sqs, exp_avg_diffs, prev_grads, kahan_comps])
     for (_, dtype), (
