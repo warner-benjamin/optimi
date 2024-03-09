@@ -21,6 +21,12 @@ optimi optimizers can perform the [optimization step layer-by-layer during the b
 
 Unlike the current PyTorch implementation, optimi’s gradient release optimizers are a drop-in replacement for standard optimizers and seamlessly work with exisiting hyperparmeter schedulers.
 
+## Optimizer Accumulation: Gradient Release and Accumulation
+
+optimi optimizers can approximate gradient accumulation with gradient release by [accumulating gradients into the optimizer states](optimizer_accumulation.md).
+
+Like gradient accumulation, model parameters are not updating while accumulating gradients into optimizer states until the last accumulation step.
+
 ## Fully Decoupled Weight Decay
 
 In addition to supporting PyTorch-style decoupled weight decay, optimi optimizers also support [fully decoupled weight decay](fully_decoupled_weight_decay.md).
@@ -51,7 +57,7 @@ from optimi import AdamW
 # create or cast model in low precision (bfloat16)
 model = nn.Linear(20, 1, dtype=torch.bfloat16)
 
-# initialize AdamW with parameters and fully decoupled weight decay
+# initialize any optimi optimizer with parameters & fully decoupled weight decay
 # Kahan summation is automatically enabled since model & inputs are bfloat16
 opt = AdamW(model.parameters(), lr=1e-3, weight_decay=1e-5, decouple_lr=True)
 
@@ -70,18 +76,15 @@ To use with PyTorch-style weight decay with float32 or mixed precision:
 # create model
 model = nn.Linear(20, 1)
 
-# initialize AdamW with parameters
+# initialize any optimi optimizer with parameters
 opt = AdamW(model.parameters(), lr=1e-3, weight_decay=1e-2)
 ```
 
 To use with gradient release:
 
 ```python
-# create model
-model = nn.Linear(20, 1)
-
-# initialize AdamW with `gradient_release=True` and call
-# `prepare_for_gradient_release` on model and optimizer
+# initialize any optimi optimizer with `gradient_release=True`
+# and call `prepare_for_gradient_release` on model and optimizer
 opt = AdamW(model.parameters(), lr=1e-3, gradient_release=True)
 prepare_for_gradient_release(model, opt)
 
@@ -89,10 +92,43 @@ prepare_for_gradient_release(model, opt)
 loss = model(torch.randn(20, dtype=torch.bfloat16))
 loss.backward()
 
-# optimizer step and sero_grad is no longer needed, and
-# will no-op if called by an existing training framework
-opt.step()
-opt.zero_grad()
+# optimizer step and zero_grad are no longer needed, and will
+# harmlessly no-op if called by an existing training framework
+# opt.step()
+# opt.zero_grad()
+
+# optionally remove gradient release hooks when done training
+remove_gradient_release(model)
+```
+
+To use with optimizer accumulation:
+
+```python
+# initialize any optimi optimizer with `gradient_release=True`
+# and call `prepare_for_gradient_release` on model and optimizer
+opt = AdamW(model.parameters(), lr=1e-3, gradient_release=True)
+prepare_for_gradient_release(model, opt)
+
+# update model parameters every four steps after accumulating
+# gradients directly into the optimizer states
+accumulation_steps = 4
+
+# use existing PyTorch dataloader
+for idx, batch in enumerate(dataloader):
+    # `optimizer_accumulation=True` accumulates gradients into
+    # optimizer states. set `optimizer_accumulation=False` to
+    # update parameters by performing a full gradient release step
+    opt.optimizer_accumulation = (idx+1) % accumulation_steps != 0
+
+    # calling backward on the model will peform the optimizer step
+    # either accumulating gradients or updating model parameters
+    loss = model(batch)
+    loss.backward()
+
+    # optimizer step and zero_grad are no longer needed, and will
+    # harmlessly no-op if called by an existing training framework
+    # opt.step()
+    # opt.zero_grad()
 
 # optionally remove gradient release hooks when done training
 remove_gradient_release(model)
