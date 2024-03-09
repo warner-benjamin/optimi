@@ -8,7 +8,7 @@ Like PyTorch, optimi supports foreach implementations of all optimizers. Foreach
 
 Foreach implementations can increase optimizer peak memory usage. optimi attempts to reduce this extra overhead by reusing the gradient buffer for temporary variables. If the gradients are required between the optimization step and [gradient reset step](https://pytorch.org/docs/stable/generated/torch.optim.Optimizer.zero_grad.html#torch.optim.Optimizer.zero_grad), set `foreach=False` to use the for-loop implementation.
 
-??? warning "Important: Foreach Requires PyTorch 2.1+"
+??? note "Note: Foreach Requires PyTorch 2.1+"
 
     optimi’s foreach implementations require PyTorch 2.1 or newer.
 

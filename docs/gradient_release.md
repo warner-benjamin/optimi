@@ -4,13 +4,13 @@ title: "Gradient Release: Fused Backward and Optimizer Step"
 
 # Gradient Release: Fused Backward and Optimizer Step
 
-Gradient release reduces training memory by limiting gradients to one layer at any given time. Unlike [PyTorch’s implementation](https://pytorch.org/tutorials/intermediate/optimizer_step_in_backward_tutorial.html), optimi’s gradient release is fully compatible with existing learning rate and optimizer schedulers and training frameworks.
+Gradient release reduces training memory by limiting gradients to one layer at any given time. Unlike [PyTorch’s implementation](https://pytorch.org/tutorials/intermediate/optimizer_step_in_backward_tutorial.html), optimi’s gradient release is fully compatible with both existing learning rate and optimizer schedulers and existing training frameworks.
 
 During the backward pass, each model layer calculates its gradients, performs the optimizer step, and clears the gradients before proceeding to the backward pass for the next layer. This fused backward and optimizer step can reduce non-activation memory usage by ~25 percent for an Adam optimizer.
 
-Gradient release can be combined with other techniques such as [Kahan summation](kahan_summation.md) or activation checkpointing for further memory savings.
+Gradient release can also be combined with other techniques such as [Kahan summation](kahan_summation.md) or [activation checkpointing](https://pytorch.org/docs/stable/checkpoint.html) for further memory savings.
 
-??? warning "Important: Gradient Release Requires PyTorch 2.1+"
+??? note "Note: Gradient Release Requires PyTorch 2.1+"
 
     Gradient release requires PyTorch 2.1 or newer.
 
@@ -18,9 +18,19 @@ Gradient release was proposed by Pudipeddi et al in [*Training Large Neural Netw
 
 ## Limitations and Workarounds
 
-Since gradient release immediately frees the gradient during the backward pass, features which rely on persistent gradients like gradient clipping or gradient accumulation won’t work.
+Since gradient release immediately frees the gradient during the backward pass, features which rely on persistent gradients like AMP's `GradScaler`, gradient clipping, or gradient accumulation won’t work.
+
+!!! warning "Important: Gradient Release is Incompatible with FP16 Mixed Precision"
+
+    Gradient release is incompatible with Float16 Automatic Mixed Precision since PyTorch's `GradScaler` requires access to the entire model's gradients for the optimizer step.
+
+    Use BFloat16 Automatic Mixed Precision instead.
 
 The recommended workaround for gradient clipping is to use [StableAdamW](optimizers/stableadamw.md) instead of Adam or AdamW, as StableAdamW removes the need for gradient clipping by porting Adafactor’s update clipping into AdamW.
+
+??? tip "Tip: Use Optimizer Accumulation to Approximate Gradient Accumulation"
+
+    optimi's [optimizer accumulation](optimizer_accumulation.md) approximates [gradient accumlation](https://pytorch.org/docs/stable/notes/amp_examples.html#gradient-accumulation) by defering parameter updates while accumulating gradients directly into the optimizer states.
 
 One potential workaround for gradient accumulation is to increase the optimizer’s momentum or $\beta_1$ to approximate accumulating gradients across multiple batches.
 
@@ -45,10 +55,10 @@ prepare_for_gradient_release(model, opt)
 loss = model(torch.randn(20, dtype=torch.bfloat16))
 loss.backward()
 
-# optimizer step and sero_grad is no longer needed, and
-# will no-op if called by an existing training framework
-opt.step()
-opt.zero_grad()
+# optimizer step and zero_grad are no longer needed, and will
+# harmlessly no-op if called by an existing training framework
+# opt.step()
+# opt.zero_grad()
 
 # optionally remove gradient release hooks when done training
 remove_gradient_release(model)
