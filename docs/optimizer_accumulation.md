@@ -1,8 +1,11 @@
 ---
 title: "Optimizer Accumulation"
+description: "Gradient Release with Approximate Gradient Accumulation"
 ---
 
 # Optimizer Accumulation
+
+**Gradient Release with Approximate Gradient Accumulation**
 
 [Gradient accumulation](https://pytorch.org/docs/stable/notes/amp_examples.html#gradient-accumulation) reduces training memory by splitting a batch into micro-batches and accumulating micro-batch gradients into the larger batch. [Gradient release](gradient_release.md) reduces training memory by limiting gradients to one layer at any given time. Optimizer accumulation unifies these two disparate approaches by accumulating gradients directly into optimizer states while performing gradient release.
 

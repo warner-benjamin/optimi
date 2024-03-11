@@ -1,8 +1,11 @@
 ---
-title: "Gradient Release: Fused Backward and Optimizer Step"
+title: "Gradient Release"
+description: "Fused Backward Pass and Optimizer Step"
 ---
 
-# Gradient Release: Fused Backward and Optimizer Step
+# Gradient Release
+
+**Fused Backward Pass and Optimizer Step**
 
 Gradient release reduces training memory by limiting gradients to one layer at any given time. Unlike [PyTorch’s implementation](https://pytorch.org/tutorials/intermediate/optimizer_step_in_backward_tutorial.html), optimi’s gradient release is fully compatible with both existing learning rate and optimizer schedulers and existing training frameworks.
 
