@@ -169,6 +169,7 @@ class Adam(OptimiOptimizer):
                     kahan_sum=group["kahan_sum"],
                     foreach=group["foreach"],
                     gradient_release=False,
+                    optimizer_accumulation=False,
                 )
         else:
             state = self.state[param]
@@ -193,6 +194,7 @@ class Adam(OptimiOptimizer):
                 kahan_sum=group["kahan_sum"],
                 foreach=False,
                 gradient_release=True,
+                optimizer_accumulation=self._optimizer_accumulation,
             )
 
         return loss
@@ -217,6 +219,7 @@ def adam(
     kahan_sum: bool = False,
     foreach: bool = False,
     gradient_release: bool = False,
+    optimizer_accumulation: bool = False,
 ):
     """Functional API to apply an Adam or AdamW optimization step.
 
@@ -240,6 +243,7 @@ def adam(
         kahan_sum: Enables Kahan summation for low precision parameters
         foreach: Enables the faster foreach implementation
         gradient_release: Fuses optimizer step as part of the parameter's backward pass
+        optimizer_accumulation: Accumulate gradients into state during gradient release step
     """
     # calculate debiased beta hat & complement terms
     step.add_(1)
@@ -276,6 +280,7 @@ def adam(
         eps=eps,
         decouple_wd=(decouple_wd or decouple_lr),
         kahan_sum=kahan_sum,
+        update_parameters=(not optimizer_accumulation),
     )
 
 
@@ -293,6 +298,7 @@ def _single_adam(
     eps: float,
     decouple_wd: bool,
     kahan_sum: bool = False,
+    update_parameters: bool = True,
 ):
     for i, param in enumerate(params):
         grad = grads[i]
@@ -313,6 +319,7 @@ def _single_adam(
             eps=eps,
             decouple_wd=decouple_wd,
             kahan_sum=kahan_sum,
+            update_parameters=update_parameters,
         )
 
 
@@ -330,9 +337,10 @@ def _single_param_adam(
     eps: float,
     decouple_wd: bool,
     kahan_sum: bool = False,
+    update_parameters: bool = True,
 ):
     # decoupled weight decay, fully decoupled weight decay, or L2 weight decay
-    if weight_decay != 0:
+    if weight_decay != 0 and update_parameters:
         if decouple_wd:
             param.mul_(weight_decay)
         else:
@@ -342,19 +350,20 @@ def _single_param_adam(
     exp_avg.lerp_(grad, weight=beta1_comp)
     exp_avg_sq.mul_(beta2_hat).addcmul_(grad, grad, value=1 - beta2_hat)
 
-    if kahan_sum and param.dtype in [torch.float16, torch.bfloat16]:
-        # Adam step
-        kahan_comp.addcdiv_(exp_avg, exp_avg_sq.sqrt().add_(eps), value=-lr)
+    if update_parameters:
+        if kahan_sum and param.dtype in [torch.float16, torch.bfloat16]:
+            # Adam step
+            kahan_comp.addcdiv_(exp_avg, exp_avg_sq.sqrt().add_(eps), value=-lr)
 
-        # update weights with kahan compensation using grad as temp buffer
-        grad.copy_(param.detach())
-        param.add_(kahan_comp)
+            # update weights with kahan compensation using grad as temp buffer
+            grad.copy_(param.detach())
+            param.add_(kahan_comp)
 
-        # save error back to kahan compensation for next iteration
-        kahan_comp.add_(grad.sub_(param))
-    else:
-        # Adam step
-        param.addcdiv_(exp_avg, exp_avg_sq.sqrt().add_(eps), value=-lr)
+            # save error back to kahan compensation for next iteration
+            kahan_comp.add_(grad.sub_(param))
+        else:
+            # Adam step
+            param.addcdiv_(exp_avg, exp_avg_sq.sqrt().add_(eps), value=-lr)
 
 
 def _foreach_adam(
@@ -371,6 +380,7 @@ def _foreach_adam(
     eps: float,
     decouple_wd: bool,
     kahan_sum: bool = False,
+    **kwargs,
 ):
     grouped_tensors = _group_tensors_by_device_and_dtype([params, grads, exp_avgs, exp_avg_sqs, kahan_comps])
     for (_, dtype), ((dev_params, dev_grads, dev_exp_avgs, dev_exp_avg_sqs, dev_kahan_comps), _) in grouped_tensors.items():

@@ -40,6 +40,9 @@ class OptimiOptimizer(Optimizer):
 
         super().__init__(params, defaults)
 
+        # by default perform the normal parameter update step
+        self._optimizer_accumulation = False
+
         # if gradient_release is enabled, disable foreach step so normal optimizer step won't error
         if self.defaults["gradient_release"]:
             self.defaults["foreach"] = False
@@ -47,6 +50,16 @@ class OptimiOptimizer(Optimizer):
                 group["foreach"] = False
                 for p in group["params"]:
                     self.state[p]["group"] = group
+
+    @property
+    def optimizer_accumulation(self) -> bool:
+        "Accumulate gradients in optimizer states during gradient release instead of a full step."
+        return self._optimizer_accumulation
+
+    @optimizer_accumulation.setter
+    def optimizer_accumulation(self, optimizer_accumulation: bool):
+        "Accumulate gradients in optimizer states during gradient release instead of a full step."
+        self._optimizer_accumulation = optimizer_accumulation
 
     def step(self, closure: Callable | None = None, param: Tensor | None = None):
         """Performs a single optimization step on the whole model or individual parameter.

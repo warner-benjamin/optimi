@@ -88,6 +88,7 @@ extra_css:
 nav:
   - Low Precision Training: kahan_summation.md
   - Gradient Release: gradient_release.md
+  - Optimizer Accumulation: optimizer_accumulation.md
   - ForEach Optimizers: foreach.md
   - Fully Decoupled Weight Decay: fully_decoupled_weight_decay.md
   - Which Optimizer?: which_optimizer.md

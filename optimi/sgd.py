@@ -159,6 +159,7 @@ class SGD(OptimiOptimizer):
                     kahan_sum=group["kahan_sum"],
                     foreach=group["foreach"],
                     gradient_release=False,
+                    optimizer_accumulation=False,
                 )
         else:
             state = self.state[param]
@@ -180,6 +181,7 @@ class SGD(OptimiOptimizer):
                 kahan_sum=group["kahan_sum"],
                 foreach=False,
                 gradient_release=True,
+                optimizer_accumulation=self._optimizer_accumulation,
             )
 
         return loss
@@ -201,6 +203,7 @@ def sgd(
     kahan_sum: bool = False,
     foreach: bool = False,
     gradient_release: bool = False,
+    optimizer_accumulation: bool = False,
 ):
     """Functional API to apply a SGD or SGDW optimization step.
 
@@ -221,6 +224,7 @@ def sgd(
         kahan_sum: Enables Kahan summation for low precision `params`
         foreach: Enables the faster foreach implementation
         gradient_release: Fuses optimizer step as part of the parameter's backward pass
+        optimizer_accumulation: Accumulate gradients into state during gradient release step
     """
     # calculate decoupled weight decay or fully decoupled weight decay
     if weight_decay != 0:
@@ -250,6 +254,7 @@ def sgd(
         dampening=dampening,
         decouple_wd=(decouple_wd or decouple_lr),
         kahan_sum=kahan_sum,
+        update_parameters=(not optimizer_accumulation),
     )
 
 
@@ -265,6 +270,7 @@ def _single_sgd(
     dampening: bool,
     decouple_wd: bool,
     kahan_sum: bool = False,
+    update_parameters: bool = True,
 ):
     for i, param in enumerate(params):
         grad = grads[i]
@@ -282,6 +288,7 @@ def _single_sgd(
             dampening=dampening,
             decouple_wd=decouple_wd,
             kahan_sum=kahan_sum,
+            update_parameters=update_parameters,
         )
 
 
@@ -297,23 +304,27 @@ def _single_param_sgd(
     dampening: bool,
     decouple_wd: bool,
     kahan_sum: bool = False,
+    update_parameters: bool = True,
 ):
     # decoupled weight decay, fully decoupled weight decay, or L2 weight decay
-    if weight_decay != 0:
+    if weight_decay != 0 and update_parameters:
         if decouple_wd:
             param.mul_(weight_decay)
         else:
             grad.add_(param, alpha=weight_decay)
 
     if momentum != 0:
-        # SGD Momentum
+        # SGD with Momentum
         if dampening:
             exp_avg.lerp_(grad, weight=1 - momentum)
         else:
             exp_avg.mul_(momentum).add_(grad)
+    else:
+        exp_avg = grad
 
+    if update_parameters:
         if kahan_sum and param.dtype in [torch.float16, torch.bfloat16]:
-            # SGD with Momentum step
+            # SGD step (regular step exp_agv = grad)
             kahan_comp.add_(exp_avg, alpha=-lr)
 
             # update weights with kahan compensation using grad as temp buffer
@@ -323,22 +334,8 @@ def _single_param_sgd(
             # save error back to kahan compensation for next iteration
             kahan_comp.add_(grad.sub_(param))
         else:
-            # SGD with Momentum step
+            # SGD step (regular step exp_agv = grad)
             param.add_(exp_avg, alpha=-lr)
-    else:
-        if kahan_sum and param.dtype in [torch.float16, torch.bfloat16]:
-            # SGD step
-            kahan_comp.add_(grad, alpha=-lr)
-
-            # update weights with kahan compensation using grad as temp buffer
-            grad.copy_(param.detach())
-            param.add_(kahan_comp)
-
-            # save error back to kahan compensation for next iteration
-            kahan_comp.add_(grad.sub_(param))
-        else:
-            # SGD step
-            param.add_(grad, alpha=-lr)
 
 
 def _foreach_sgd(
@@ -353,6 +350,7 @@ def _foreach_sgd(
     dampening: bool,
     decouple_wd: bool,
     kahan_sum: bool = False,
+    **kwargs,
 ):
     grouped_tensors = _group_tensors_by_device_and_dtype([params, grads, exp_avgs, kahan_comps])
     for (_, dtype), ((dev_params, dev_grads, dev_exp_avgs, dev_kahan_comps), _) in grouped_tensors.items():
@@ -364,39 +362,26 @@ def _foreach_sgd(
                 torch._foreach_add_(dev_grads, dev_params, alpha=weight_decay)
 
         if momentum != 0:
-            # SGD Momentum
+            # SGD with Momentum
             if dampening:
                 torch._foreach_lerp_(dev_exp_avgs, dev_grads, weight=1 - momentum)
             else:
                 torch._foreach_mul_(dev_exp_avgs, scalar=momentum)
                 torch._foreach_add_(dev_exp_avgs, dev_grads, alpha=1)
-
-            if kahan_sum and dtype in [torch.float16, torch.bfloat16]:
-                # SGD with Momentum step
-                torch._foreach_add_(dev_kahan_comps, dev_exp_avgs, alpha=-lr)
-
-                # update weights with kahan compensation using dev_grads as temp buffer
-                torch._foreach_copy_(dev_grads, dev_params)
-                torch._foreach_add_(dev_params, dev_kahan_comps, alpha=1)
-
-                # save error back to kahan compensation for next iteration
-                torch._foreach_sub_(dev_grads, dev_params, alpha=1)
-                torch._foreach_add_(dev_kahan_comps, dev_grads, alpha=1)
-            else:
-                # SGD with Momentum step
-                torch._foreach_add_(dev_params, dev_exp_avgs, alpha=-lr)
         else:
-            if kahan_sum and dtype in [torch.float16, torch.bfloat16]:
-                # SGD step
-                torch._foreach_add_(dev_kahan_comps, dev_grads, alpha=-lr)
+            dev_exp_avgs = dev_grads
 
-                # update weights with kahan compensation using dev_grads as temp buffer
-                torch._foreach_copy_(dev_grads, dev_params)
-                torch._foreach_add_(dev_params, dev_kahan_comps, alpha=1)
+        if kahan_sum and dtype in [torch.float16, torch.bfloat16]:
+            # SGD step (regular step exp_agv = grad)
+            torch._foreach_add_(dev_kahan_comps, dev_exp_avgs, alpha=-lr)
 
-                # save error back to kahan compensation for next iteration
-                torch._foreach_sub_(dev_grads, dev_params, alpha=1)
-                torch._foreach_add_(dev_kahan_comps, dev_grads, alpha=1)
-            else:
-                # SGD step
-                torch._foreach_add_(dev_params, dev_grads, alpha=-lr)
+            # update weights with kahan compensation using dev_grads as temp buffer
+            torch._foreach_copy_(dev_grads, dev_params)
+            torch._foreach_add_(dev_params, dev_kahan_comps, alpha=1)
+
+            # save error back to kahan compensation for next iteration
+            torch._foreach_sub_(dev_grads, dev_params, alpha=1)
+            torch._foreach_add_(dev_kahan_comps, dev_grads, alpha=1)
+        else:
+            # SGD step (regular step exp_agv = grad)
+            torch._foreach_add_(dev_params, dev_exp_avgs, alpha=-lr)

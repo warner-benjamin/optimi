@@ -4,7 +4,7 @@ title: Low Precision Training with Kahan Summation
 
 # Low Precision Training with Kahan Summation
 
-While training models in low precision (Float16 or BFloat16) usually does not match training in full precision (Float32) or [mixed precision](https://pytorch.org/blog/what-every-user-should-know-about-mixed-precision-training-in-pytorch), optimi optimizers match the performance of mixed precision when training in BFloat16 by using Kahan summation[^1].
+While training models in low precision (Float16 or BFloat16) usually differs from training in full precision (Float32) or [mixed precision](https://pytorch.org/blog/what-every-user-should-know-about-mixed-precision-training-in-pytorch), optimi optimizers nearly reach or match the performance of mixed precision when training in BFloat16 by using Kahan summation[^1].
 
 Training in low precision [reduces memory usage](#memory-savings) and increases [training speed](#training-speedup) relative to mixed precision training.
 
@@ -108,6 +108,6 @@ $$
 
 This shows the optimi implementation of Kahan summation optimizers, which is equivalent to the *Revisiting BFloat16 Training* formulation.
 
-[^1]: Current testing on small models shows no degradation in training performance.
+[^1]: Current testing on small models shows little to no degradation in model performance.
 
 [^2]: Also known as Kahan–Babuška summation or compensated summation.

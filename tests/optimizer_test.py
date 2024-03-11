@@ -122,13 +122,13 @@ def run_optimizer(optimizers:dict, dim1:int, dim2:int, gtype:torch.dtype, optim_
 
 
 def gradient_release(optimizers:dict, dim1:int, dim2:int, dtype:torch.dtype, optim_name:str,
-                     ftype:str, device:torch.device, iterations:int=20, framework_opt_step:bool=False):
+                     ftype:str, device:torch.device, iterations:int=80, framework_opt_step:bool=False):
     def optimizer_hook(parameter) -> None:
         torch_optimizers[parameter].step()
         torch_optimizers[parameter].zero_grad()
 
-    # Since Lion & Adan can have noisy updates, allow up to 10 errors
-    max_error_count = 10
+    # Since Lion & Adan can have noisy updates, allow up to 12 errors
+    max_error_count = 12
 
     if dtype == torch.float32:
         atol, rtol = 1e-6, 1e-5
@@ -192,14 +192,77 @@ def gradient_release(optimizers:dict, dim1:int, dim2:int, dtype:torch.dtype, opt
             optimi_optimizer.step()
             optimi_optimizer.zero_grad()
 
-        assert_most_approx_close(m1.fc1.weight, m2.fc1.weight, rtol=rtol, atol=atol, max_error_count=max_error_count, name='PyTorch-PyTorch: ')
-        assert_most_approx_close(m1.fc2.weight, m2.fc2.weight, rtol=rtol, atol=atol, max_error_count=max_error_count, name='PyTorch-PyTorch: ')
-        assert_most_approx_close(m1.fc1.weight, m3.fc1.weight, rtol=rtol, atol=atol, max_error_count=max_error_count, name='PyTorch-Optimi: ')
-        assert_most_approx_close(m1.fc2.weight, m3.fc2.weight, rtol=rtol, atol=atol, max_error_count=max_error_count, name='PyTorch-Optimi: ')
+        assert_most_approx_close(m1.fc1.weight, m2.fc1.weight, rtol=rtol, atol=atol,
+                                 max_error_count=max_error_count, name='PyTorch-PyTorch: ')
+        assert_most_approx_close(m1.fc2.weight, m2.fc2.weight, rtol=rtol, atol=atol,
+                                 max_error_count=max_error_count, name='PyTorch-PyTorch: ')
+        assert_most_approx_close(m1.fc1.weight, m3.fc1.weight, rtol=rtol, atol=atol,
+                                 max_error_count=max_error_count, name='PyTorch-Optimi: ')
+        assert_most_approx_close(m1.fc2.weight, m3.fc2.weight, rtol=rtol, atol=atol,
+                                 max_error_count=max_error_count, name='PyTorch-Optimi: ')
 
     for h in pytorch_hooks:
         h.remove()
     remove_gradient_release(m3)
+
+
+def optimizer_accumulation(optimizers:dict, dim1:int, dim2:int, dtype:torch.dtype, optim_name:str,
+                           ftype:str, device:torch.device, iterations:int=80, framework_opt_step:bool=False):
+    # Since optimizer accumulation approximates gradient accumulation, the tolerances
+    # compared to normal optimizers are quite high despite the low number of iterations
+    # SGD will randomly error out unless max_error_rate is 30%, other optimizers only need 3.5%
+    max_error_rate = 0.30 if 'sgd' in optim_name else 0.035
+    atol, rtol = 1e-2, 1e-2
+
+    m1 = MLP(dim1, dim2, device=device, dtype=dtype)
+    m2 = MLP(dim1, dim2, device=device, dtype=dtype)
+    m2.load_state_dict(m1.state_dict())
+
+    regular_optimizer = load_optimizer(m1.parameters(), optimizers, optim_name, 0, ftype)
+
+
+    # Optimim Method
+    # add the gradient release flag to the optimizer kwargs
+    optimizers[optim_name][1]['kwargs']['gradient_release'] = True
+    optimi_optimizer = load_optimizer(m2.parameters(), optimizers, optim_name, 1, ftype)
+
+    prepare_for_gradient_release(m2, optimi_optimizer)
+
+    gradient_accumulation_steps = 4
+
+    # Training loop
+    for i in range(iterations):
+        input1 = torch.randn(1, dim1, device=device, dtype=dtype)
+        input2 = input1.clone()
+        target1 = torch.randn(1, 1, device=device, dtype=dtype)
+        target2 = target1.clone()
+
+        optimi_optimizer.optimizer_accumulation = (i+1) % gradient_accumulation_steps != 0
+
+        output1 = m1(input1)
+        output2 = m2(input2)
+
+        loss1 = torch.nn.functional.mse_loss(output1, target1)
+        loss2 = torch.nn.functional.mse_loss(output2, target2)
+
+        loss1.backward()
+        loss2.backward()
+
+        if not optimi_optimizer.optimizer_accumulation:
+            regular_optimizer.step()
+            regular_optimizer.zero_grad()
+
+        # simulates using an optimi gradient release optimizer in a framework
+        # where the optimizer step and zero_grad cannot be disabled.
+        if framework_opt_step:
+            optimi_optimizer.step()
+            optimi_optimizer.zero_grad()
+
+    # unlike other tests, compare that the weights are in the same approximate range at the end of training
+    assert_most_approx_close(m1.fc1.weight, m2.fc1.weight, rtol=rtol, atol=atol, max_error_rate=max_error_rate)
+    assert_most_approx_close(m1.fc2.weight, m2.fc2.weight, rtol=rtol, atol=atol, max_error_rate=max_error_rate)
+
+    remove_gradient_release(m2)
 
 
 buffer = io.BytesIO()

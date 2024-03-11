@@ -182,6 +182,7 @@ class Ranger(OptimiOptimizer):
                     kahan_sum=group["kahan_sum"],
                     foreach=group["foreach"],
                     gradient_release=False,
+                    optimizer_accumulation=False,
                 )
         else:
             state = self.state[param]
@@ -209,6 +210,7 @@ class Ranger(OptimiOptimizer):
                 kahan_sum=group["kahan_sum"],
                 foreach=False,
                 gradient_release=True,
+                optimizer_accumulation=self._optimizer_accumulation,
             )
 
         return loss
@@ -236,6 +238,7 @@ def ranger(
     kahan_sum: bool = False,
     foreach: bool = False,
     gradient_release: bool = False,
+    optimizer_accumulation: bool = False,
 ):
     """Functional API to apply a Ranger optimization step.
 
@@ -262,6 +265,7 @@ def ranger(
         kahan_sum: Enables Kahan summation for low precision parameters
         foreach: Enables the faster foreach implementation
         gradient_release: Fuses optimizer step as part of the parameter's backward pass
+        optimizer_accumulation: Accumulate gradients into state during gradient release step
     """
     # calculate debiased beta hat & complement terms
     step.add_(1)
@@ -313,6 +317,7 @@ def ranger(
         step=step,
         decouple_wd=(decouple_wd or decouple_lr),
         kahan_sum=kahan_sum,
+        update_parameters=(not optimizer_accumulation),
     )
 
 
@@ -335,6 +340,7 @@ def _single_ranger(
     step: int,
     decouple_wd: bool,
     kahan_sum: bool = False,
+    update_parameters: bool = True,
 ):
     for i, param in enumerate(params):
         grad = grads[i]
@@ -361,6 +367,7 @@ def _single_ranger(
             step=step,
             decouple_wd=decouple_wd,
             kahan_sum=kahan_sum,
+            update_parameters=update_parameters,
         )
 
 
@@ -383,9 +390,10 @@ def _single_param_ranger(
     step: int,
     decouple_wd: bool,
     kahan_sum: bool = False,
+    update_parameters: bool = True,
 ):
     # decoupled weight decay, fully decoupled weight decay, or L2 weight decay
-    if weight_decay != 0:
+    if weight_decay != 0 and update_parameters:
         if decouple_wd:
             param.mul_(weight_decay)
         else:
@@ -395,43 +403,44 @@ def _single_param_ranger(
     exp_avg.lerp_(grad, weight=beta1_comp)
     exp_avg_sq.mul_(beta2_hat).addcmul_(grad, grad, value=1 - beta2_hat)
 
-    if kahan_sum and param.dtype in [torch.float16, torch.bfloat16]:
-        # RAdam step
-        if rect is not None:
-            kahan_comp.addcdiv_(exp_avg, exp_avg_sq.sqrt().add_(eps), value=-lr * rect)
-        else:
-            kahan_comp.add_(exp_avg, alpha=-lr)
-
-        # update weights with kahan compensation using grad as temp buffer
-        grad.copy_(param.detach())
-        param.add_(kahan_comp)
-
-        # save error back to kahan compensation for next iteration
-        kahan_comp.add_(grad.sub_(param))
-
-        # Lookahead step
-        if step % k == 0:
-            kahan_comp.add_(param.sub_(la_param), alpha=alpha)
+    if update_parameters:
+        if kahan_sum and param.dtype in [torch.float16, torch.bfloat16]:
+            # RAdam step
+            if rect is not None:
+                kahan_comp.addcdiv_(exp_avg, exp_avg_sq.sqrt().add_(eps), value=-lr * rect)
+            else:
+                kahan_comp.add_(exp_avg, alpha=-lr)
 
             # update weights with kahan compensation using grad as temp buffer
-            grad.copy_(la_param.detach())
-            la_param.add_(kahan_comp)
+            grad.copy_(param.detach())
+            param.add_(kahan_comp)
 
             # save error back to kahan compensation for next iteration
-            kahan_comp.add_(grad.sub_(la_param), alpha=alpha)
+            kahan_comp.add_(grad.sub_(param))
 
-            param.copy_(la_param)
-    else:
-        # RAdam step
-        if rect is not None:
-            param.addcdiv_(exp_avg, exp_avg_sq.sqrt().add_(eps), value=-lr * rect)
+            # Lookahead step
+            if step % k == 0:
+                kahan_comp.add_(param.sub_(la_param), alpha=alpha)
+
+                # update weights with kahan compensation using grad as temp buffer
+                grad.copy_(la_param.detach())
+                la_param.add_(kahan_comp)
+
+                # save error back to kahan compensation for next iteration
+                kahan_comp.add_(grad.sub_(la_param), alpha=alpha)
+
+                param.copy_(la_param)
         else:
-            param.add_(exp_avg, alpha=-lr)
+            # RAdam step
+            if rect is not None:
+                param.addcdiv_(exp_avg, exp_avg_sq.sqrt().add_(eps), value=-lr * rect)
+            else:
+                param.add_(exp_avg, alpha=-lr)
 
-        # Lookahead step
-        if step % k == 0:
-            la_param.add_(param.sub(la_param), alpha=alpha)
-            param.copy_(la_param)
+            # Lookahead step
+            if step % k == 0:
+                la_param.add_(param.sub(la_param), alpha=alpha)
+                param.copy_(la_param)
 
 
 def _foreach_ranger(
@@ -453,6 +462,7 @@ def _foreach_ranger(
     step: int,
     decouple_wd: bool,
     kahan_sum: bool = False,
+    **kwargs,
 ):
     grouped_tensors = _group_tensors_by_device_and_dtype([params, grads, exp_avgs, exp_avg_sqs, la_params, kahan_comps])
     for (_, dtype), ((dev_params, dev_grads, dev_exp_avgs, dev_exp_avg_sqs, dev_la_params, dev_kahan_comps), _) in grouped_tensors.items():

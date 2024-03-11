@@ -91,6 +91,7 @@ def adamw(
     kahan_sum: bool = False,
     foreach: bool = False,
     gradient_release: bool = False,
+    optimizer_accumulation: bool = False,
 ):
     """Functional API to apply an AdamW optimization step.
 
@@ -113,6 +114,7 @@ def adamw(
         kahan_sum: Enables Kahan summation for low precision `params`
         foreach: Enables the faster foreach implementation
         gradient_release: Fuses optimizer step as part of the parameter's backward pass
+        optimizer_accumulation: Accumulate gradients into state during gradient release step
     """
     adam(
         params=params,
@@ -132,4 +134,5 @@ def adamw(
         kahan_sum=kahan_sum,
         foreach=foreach,
         gradient_release=gradient_release,
+        optimizer_accumulation=optimizer_accumulation,
     )

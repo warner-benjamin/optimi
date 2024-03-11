@@ -20,9 +20,9 @@ classifiers = [
 dependencies = ["torch>=1.13", "packaging>=21.3"]
 
 [project.optional-dependencies]
-test = ["pytest>=7.4.3", "ruff>=0.1.3", "pytest-md>=0.2.0", "numpy>=1.23"]
-docs = ["mkdocs-material>=9.4.7", "mkdocstrings>=0.23.0", "mkdocstrings-python>=1.7.3", "black>=23.10.1", "mkdocs-caption>=0.0.9"]
-dev = ["pytest>=7.4.3", "ruff>=0.1.3", "mkdocs-material>=9.4.7", "mkdocstrings>=0.23.0", "mkdocstrings-python>=1.7.3", "black>=23.10.1", "mkdocs-caption>=0.0.9"]
+test = ["pytest>=8.1.1", "ruff>=0.3.2", "pytest-md>=0.2.0", "numpy>=1.23"]
+docs = ["mkdocs-material>=9.4.7", "mkdocstrings>=0.24.1", "mkdocstrings-python>=1.8.0", "black>=24.2.0", "mkdocs-caption>=1.0.0"]
+dev = ["pytest>=8.1.1", "ruff>=0.3.2", "mkdocs-material>=9.4.7", "mkdocstrings>=0.24.1", "mkdocstrings-python>=1.8.0", "black>=24.2.0", "mkdocs-caption>=1.0.0"]
 
 [project.urls]
 "Homepage" = "https://optimi.benjaminwarner.dev"
@@ -38,27 +38,23 @@ packages = ["optimi"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-markers = ["cpu", "cuda"]
+markers = ["cpu", "cuda", "adam", "adan", "lion", "radam", "ranger", "sgd", "stableadam"]
 
 [tool.ruff]
 line-length = 140
-select = ["E", "W", "F", "I", "D", "UP"]
-extend-ignore = ["D100", "D107", "D206", "D300", "E111", "E114", "E117"]
 extend-exclude = ["tests", "docs"]
 src = ["optimi"]
-
-[tool.ruff.extend-per-file-ignores]
-"__init__.py" = ["D104", "F401", "I002"]
-"utils.py" = ["I002"]
 
 [tool.ruff.format]
 exclude = ["tests", "docs"]
 
-[tool.ruff.isort]
-required-imports = ["from __future__ import annotations"]
+[tool.ruff.lint]
+select = ["E", "W", "F", "I", "D", "UP"]
+extend-ignore = ["D100", "D107", "D206", "D300", "E111", "E114", "E117"]
+isort.required-imports = ["from __future__ import annotations"]
+pycodestyle.max-doc-length = 100
+pydocstyle.convention = "google"
 
-[tool.ruff.pycodestyle]
-max-doc-length = 100
-
-[tool.ruff.pydocstyle]
-convention = "google"
+[tool.ruff.lint.extend-per-file-ignores]
+"__init__.py" = ["D104", "F401", "I002"]
+"utils.py" = ["I002"]
