@@ -5,7 +5,7 @@ site_url: https://optimi.benjaminwarner.dev
 repo_name: warner-benjamin/optimi
 repo_url: https://github.com/warner-benjamin/optimi
 
-copyright: Copyright &copy; 2023 Benjamin Warner, MIT License
+copyright: Copyright &copy; 2024 Benjamin Warner, MIT License
 
 theme:
   name: material
