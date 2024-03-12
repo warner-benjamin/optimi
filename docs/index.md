@@ -86,6 +86,9 @@ To use with gradient release:
 opt = AdamW(model.parameters(), lr=1e-3, gradient_release=True)
 prepare_for_gradient_release(model, opt)
 
+# setup a learning rate scheduler like normal
+scheduler = CosineAnnealingLR(opt, ...)
+
 # calling backward on the model will peform the optimzier step
 loss = model(torch.randn(20, dtype=torch.bfloat16))
 loss.backward()
@@ -94,6 +97,9 @@ loss.backward()
 # harmlessly no-op if called by an existing training framework
 # opt.step()
 # opt.zero_grad()
+
+# step the learning rate scheduler like normal
+scheduler.step()
 
 # optionally remove gradient release hooks when done training
 remove_gradient_release(model)
@@ -111,6 +117,9 @@ prepare_for_gradient_release(model, opt)
 # gradients directly into the optimizer states
 accumulation_steps = 4
 
+# setup a learning rate scheduler for gradient accumulation
+scheduler = CosineAnnealingLR(opt, ...)
+
 # use existing PyTorch dataloader
 for idx, batch in enumerate(dataloader):
     # `optimizer_accumulation=True` accumulates gradients into
@@ -127,6 +136,10 @@ for idx, batch in enumerate(dataloader):
     # harmlessly no-op if called by an existing training framework
     # opt.step()
     # opt.zero_grad()
+
+    # step the learning rate scheduler after accumulating gradients
+    if not opt.optimizer_accumulation:
+        scheduler.step()
 
 # optionally remove gradient release hooks when done training
 remove_gradient_release(model)
