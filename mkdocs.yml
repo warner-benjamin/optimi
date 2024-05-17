@@ -57,15 +57,16 @@ plugins:
       default_handler: python
       handlers:
         python:
+          # import:
+          #   - https://pytorch.org/docs/stable/objects.inv
           options:
             show_bases: false
             show_source: false
-            show_root_heading: True
-            show_root_toc_entry: False
-            show_root_full_path: False
+            show_root_heading: true
+            show_root_toc_entry: false
+            show_root_full_path: false
             members: false
             separate_signature: true
-            show_signature: false
 
 extra:
   social:
@@ -101,4 +102,4 @@ nav:
     - Ranger: optimizers/ranger.md
     - SGD: optimizers/sgd.md
     - StableAdamW: optimizers/stableadamw.md
-
+  - Utilities: utils.md
