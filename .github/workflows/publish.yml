@@ -37,8 +37,8 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     environment:
-      name: testpypi
-      url: https://test.pypi.org/p/torch-optimi
+      name: release
+      url: https://pypi.org/p/torch-optimi
     permissions:
       id-token: write
     needs: [test]
@@ -63,5 +63,3 @@ jobs:
 
     - name: Publish
       uses: pypa/gh-action-pypi-publish@release/v1.8
-      with:
-        repository-url: https://test.pypi.org/legacy/
