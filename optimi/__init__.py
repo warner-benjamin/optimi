@@ -1,6 +1,4 @@
-from importlib.metadata import version
-
-__version__ = version("torch-optimi")
+__version__ = "0.2.0"
 
 from .adam import Adam, adam
 from .adamw import AdamW, adamw

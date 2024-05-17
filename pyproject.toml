@@ -1,11 +1,10 @@
 [project]
 name = "torch-optimi"
-version = "0.2.0"
-authors = [{name = "Benjamin Warner", email = "me@benjaminwarner.dev"}]
+authors = [{ name = "Benjamin Warner", email = "me@benjaminwarner.dev" }]
 description = "Fast, Modern, & Low Precision PyTorch Optimizers"
 readme = "README.md"
 requires-python = ">=3.8"
-license = {file = "LICENSE"}
+license = { file = "LICENSE" }
 keywords = ["Optimizers", "PyTorch", "Deep Learning"]
 classifiers = [
     "Development Status :: 4 - Beta",
@@ -15,14 +14,30 @@ classifiers = [
     "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
-    'Topic :: Scientific/Engineering :: Artificial Intelligence'
+    "Programming Language :: Python :: 3.12",
+    'Topic :: Scientific/Engineering :: Artificial Intelligence',
 ]
 dependencies = ["torch>=1.13", "packaging>=21.3"]
+dynamic = ["version"]
 
 [project.optional-dependencies]
 test = ["pytest>=8.1.1", "ruff>=0.3.2", "pytest-md>=0.2.0", "numpy>=1.23"]
-docs = ["mkdocs-material>=9.4.7", "mkdocstrings>=0.24.1", "mkdocstrings-python>=1.8.0", "black>=24.2.0", "mkdocs-caption>=1.0.0"]
-dev = ["pytest>=8.1.1", "ruff>=0.3.2", "mkdocs-material>=9.4.7", "mkdocstrings>=0.24.1", "mkdocstrings-python>=1.8.0", "black>=24.2.0", "mkdocs-caption>=1.0.0"]
+docs = [
+    "mkdocs-material>=9.4.7",
+    "mkdocstrings>=0.24.1",
+    "mkdocstrings-python>=1.8.0",
+    "black>=24.2.0",
+    "mkdocs-caption>=1.0.0",
+]
+dev = [
+    "pytest>=8.1.1",
+    "ruff>=0.3.2",
+    "mkdocs-material>=9.4.7",
+    "mkdocstrings>=0.24.1",
+    "mkdocstrings-python>=1.8.0",
+    "black>=24.2.0",
+    "mkdocs-caption>=1.0.0",
+]
 
 [project.urls]
 "Homepage" = "https://optimi.benjaminwarner.dev"
@@ -36,9 +51,22 @@ build-backend = "setuptools.build_meta"
 [tool.setuptools]
 packages = ["optimi"]
 
+[tool.setuptools.dynamic]
+version = { attr = "optimi.__version__" }
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-markers = ["cpu", "cuda", "adam", "adan", "lion", "radam", "ranger", "sgd", "stableadam"]
+markers = [
+    "cpu",
+    "cuda",
+    "adam",
+    "adan",
+    "lion",
+    "radam",
+    "ranger",
+    "sgd",
+    "stableadam",
+]
 
 [tool.ruff]
 line-length = 140
@@ -49,7 +77,7 @@ src = ["optimi"]
 exclude = ["tests", "docs"]
 
 [tool.ruff.lint]
-select = ["E", "W", "F", "I", "D", "UP"]
+select = ["E", "W", "F", "I", "D", "UP", "W291"]
 extend-ignore = ["D100", "D107", "D206", "D300", "E111", "E114", "E117"]
 isort.required-imports = ["from __future__ import annotations"]
 pycodestyle.max-doc-length = 100
