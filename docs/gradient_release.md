@@ -39,7 +39,7 @@ One potential workaround for gradient accumulation is to increase the optimizer�
 
 ## Example
 
-Using optimi’s gradient release requires two steps: initializing the optimizer with `gradient_release=True` and calling `prepare_for_gradient_release` on both the model and optimizer.
+Using optimi’s gradient release requires two steps: initializing the optimizer with `gradient_release=True` and calling [`prepare_for_gradient_release`](utils.md/#optimi.gradientrelease.prepare_for_gradient_release) on both the model and optimizer.
 
 ```python
 import torch
