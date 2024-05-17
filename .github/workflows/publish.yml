@@ -63,3 +63,5 @@ jobs:
 
     - name: Publish
       uses: pypa/gh-action-pypi-publish@release/v1.8
+      with:
+        repository-url: https://test.pypi.org/legacy/
