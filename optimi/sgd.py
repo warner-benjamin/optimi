@@ -89,7 +89,7 @@ class SGD(OptimiOptimizer):
         super().__init__(params, defaults)
 
     def _init_state(self, group: dict[str, Any], state: dict[Tensor, Any], param: Tensor):
-        if len(state) <= 1:
+        if "kahan_comp" not in state:
             if group["dampening"] and group["torch_init"]:
                 state["exp_avg"] = param.grad.detach().clone()
             else:

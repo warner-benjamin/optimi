@@ -96,7 +96,7 @@ class Adan(OptimiOptimizer):
         super().__init__(params, defaults)
 
     def _init_state(self, group: dict[str, Any], state: dict[Tensor, Any], param: Tensor, gradient_release: bool = False):
-        if len(state) <= 1:
+        if "kahan_comp" not in state:
             state["exp_avg"] = torch.zeros_like(param, memory_format=torch.preserve_format)
             state["exp_avg_diff"] = torch.zeros_like(param, memory_format=torch.preserve_format)
             state["exp_avg_sq"] = torch.zeros_like(param, memory_format=torch.preserve_format)

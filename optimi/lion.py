@@ -80,7 +80,7 @@ class Lion(OptimiOptimizer):
         super().__init__(params, defaults)
 
     def _init_state(self, group: dict[str, Any], state: dict[Tensor, Any], param: Tensor):
-        if len(state) <= 1:
+        if "kahan_comp" not in state:
             state["exp_avg"] = torch.zeros_like(param, memory_format=torch.preserve_format)
 
             if (group["kahan_sum"] or group["kahan_sum"] is None) and param.dtype in [torch.float16, torch.bfloat16]:
