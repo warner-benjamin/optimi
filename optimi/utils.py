@@ -39,7 +39,7 @@ def param_groups_weight_decay(
     Returns:
         List of parameter groups with and without weight decay.
     """
-    additional_layers = set(additional_layers)
+    additional_layers = set(additional_layers) if additional_layers is not None else set()
     decay = []
     no_decay = []
     for name, param in model.named_parameters():
