@@ -36,7 +36,7 @@ class RAdam(OptimiOptimizer):
         weight_decay: Weight decay coefficient. If `decouple_wd` and `decouple_lr` are False,
             applies L2 penalty (default: 0)
         eps: Added to denominator to improve numerical stability (default: 1e-6)
-        decouple_wd: Apply decoupled weight decay instead of L2 penalty (default: True)
+        decouple_wd: Apply decoupled weight decay instead of L2 penalty (default: False)
         decouple_lr: Apply fully decoupled weight decay instead of L2 penalty (default: False)
         max_lr: Maximum scheduled learning rate. Set if `lr` is not the maximum scheduled learning
             rate and `decouple_lr` is True (default: None)
