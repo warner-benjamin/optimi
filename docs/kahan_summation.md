@@ -58,7 +58,7 @@ optimi reduces potential extra memory overhead of Kahan summation by reusing the
 
 ## Training Speedup
 
-Training in BFloat16 instead of mixed precision results in a ~10% speedup on a single GPU, ~20% speedup with two GPUs, and up to ~30% speedup with multiple GPUs[^3].
+Training in BFloat16 instead of mixed precision results in up to a ~10% speedup on a single GPU, up to a ~20% speedup with two GPUs, and up to a ~30% speedup with multiple GPUs[^3].
 
 ## Example
 
@@ -129,4 +129,4 @@ These Kahan summation steps allow optimi optimizers to nearly reach or match the
 
 [^2]: Also known as Kahan–Babuška summation or compensated summation.
 
-[^3]: BFloat16 training increases distributed training speed more then single GPU due to the halved bandwidth cost. Observed results may differ based on GPU connectivity.
+[^3]: BFloat16 training increases distributed training speed more then single GPU due to the halved bandwidth cost. Observed results may differ based on GPU connectivity. Maximum observed speed increase was on consumer GPUs.
