@@ -8,7 +8,7 @@ from tests import reference
 
 from tests.optimizer_test import (buffer, run_optimizer, gradient_release, cpu_dim1, cpu_dim2, cpu_gtype,
                                   cpu_ftype, cuda_dim1, cuda_dim2, cuda_gtype, cuda_ftype, gr_dim1,
-                                  gr_dim2, gr_dtype, gr_ftype, optimizer_accumulation)
+                                  gr_dim2, gr_dtype, gr_ftype, optimizer_accumulation, cuda_device)
 
 
 
@@ -50,8 +50,8 @@ cuda_names = ["dim1_{}_dim2_{}_gtype_{}_optim_{}{}".format(*vals) for vals in cu
 @pytest.mark.cuda
 @pytest.mark.sgd
 @pytest.mark.parametrize("dim1, dim2, gtype, optim_name, ftype", cuda_values, ids=cuda_names)
-def test_optimizer_cuda(dim1:int, dim2:int, gtype:torch.dtype, optim_name:str, ftype:str):
-    run_optimizer(optimizers, dim1, dim2, gtype, optim_name, ftype, torch.device('cuda'), buffer, iterations=80)
+def test_optimizer_cuda(dim1:int, dim2:int, gtype:torch.dtype, optim_name:str, ftype:str, cuda_device:str):
+    run_optimizer(optimizers, dim1, dim2, gtype, optim_name, ftype, torch.device(cuda_device), buffer, iterations=80)
 
 
 
@@ -61,17 +61,17 @@ cuda_names = ["dim1_{}_dim2_{}_gtype_{}_optim_{}{}".format(*vals) for vals in cu
 @pytest.mark.cuda
 @pytest.mark.sgd
 @pytest.mark.parametrize("dim1, dim2, gtype, optim_name, ftype", cuda_values, ids=cuda_names)
-def test_gradient_release(dim1:int, dim2:int, gtype:torch.dtype, optim_name:str, ftype:str):
-    gradient_release(optimizers, dim1, dim2, gtype, optim_name, ftype, torch.device('cuda'),
+def test_gradient_release(dim1:int, dim2:int, gtype:torch.dtype, optim_name:str, ftype:str, cuda_device:str):
+    gradient_release(optimizers, dim1, dim2, gtype, optim_name, ftype, torch.device(cuda_device),
                      framework_opt_step=torch.rand(1).item() > 0.5)
 
 
 @pytest.mark.cuda
 @pytest.mark.sgd
 @pytest.mark.parametrize("dim1, dim2, gtype, optim_name, ftype", cuda_values, ids=cuda_names)
-def test_optimizer_accumulation(dim1:int, dim2:int, gtype:torch.dtype, optim_name:str, ftype:str):
+def test_optimizer_accumulation(dim1:int, dim2:int, gtype:torch.dtype, optim_name:str, ftype:str, cuda_device:str):
     if optim_name in ["sgd", "sgd_l2"]:
         pytest.skip("Skip tests for SGD and SGD with L2 weight decay.")
     # SGD will error out more often if iterations is the default of 80
-    optimizer_accumulation(optimizers, dim1, dim2, gtype, optim_name, ftype, torch.device('cuda'),
+    optimizer_accumulation(optimizers, dim1, dim2, gtype, optim_name, ftype, torch.device(cuda_device),
                            iterations=20, framework_opt_step=torch.rand(1).item() > 0.5)

@@ -8,7 +8,7 @@ from tests import reference
 
 from tests.optimizer_test import (buffer, run_optimizer, gradient_release, cpu_dim1, cpu_dim2, cpu_gtype,
                                   cpu_ftype, cuda_dim1, cuda_dim2, cuda_gtype, cuda_ftype, gr_dim1,
-                                  gr_dim2, gr_dtype, gr_ftype, optimizer_accumulation)
+                                  gr_dim2, gr_dtype, gr_ftype, optimizer_accumulation, cuda_device)
 
 # The reference Ranger adds epsilon before debiasing V while Optimi debases before.
 # Ranger tests with a smaller epsilon then other optimizers to prevent numerical divergances.
@@ -41,9 +41,9 @@ cuda_names = ["dim1_{}_dim2_{}_gtype_{}_optim_{}{}".format(*vals) for vals in cu
 @pytest.mark.cuda
 @pytest.mark.ranger
 @pytest.mark.parametrize("dim1, dim2, gtype, optim_name, ftype", cuda_values, ids=cuda_names)
-def test_optimizer_cuda(dim1:int, dim2:int, gtype:torch.dtype, optim_name:str, ftype:str):
+def test_optimizer_cuda(dim1:int, dim2:int, gtype:torch.dtype, optim_name:str, ftype:str, cuda_device:str):
     # test ranger longer due to the lookahead step
-    run_optimizer(optimizers, dim1, dim2, gtype, optim_name, ftype, torch.device('cuda'), buffer, iterations=160)
+    run_optimizer(optimizers, dim1, dim2, gtype, optim_name, ftype, torch.device(cuda_device), buffer, iterations=160)
 
 
 
@@ -53,15 +53,15 @@ cuda_names = ["dim1_{}_dim2_{}_gtype_{}_optim_{}{}".format(*vals) for vals in cu
 @pytest.mark.cuda
 @pytest.mark.ranger
 @pytest.mark.parametrize("dim1, dim2, gtype, optim_name, ftype", cuda_values, ids=cuda_names)
-def test_gradient_release(dim1:int, dim2:int, gtype:torch.dtype, optim_name:str, ftype:str):
+def test_gradient_release(dim1:int, dim2:int, gtype:torch.dtype, optim_name:str, ftype:str, cuda_device:str):
     # test ranger longer due to the lookahead step
-    gradient_release(optimizers, dim1, dim2, gtype, optim_name, ftype, torch.device('cuda'),
+    gradient_release(optimizers, dim1, dim2, gtype, optim_name, ftype, torch.device(cuda_device),
                      iterations=160, framework_opt_step=torch.rand(1).item() > 0.5)
 
 
 @pytest.mark.cuda
 @pytest.mark.ranger
 @pytest.mark.parametrize("dim1, dim2, gtype, optim_name, ftype", cuda_values, ids=cuda_names)
-def test_optimizer_accumulation(dim1:int, dim2:int, gtype:torch.dtype, optim_name:str, ftype:str):
-    optimizer_accumulation(optimizers, dim1, dim2, gtype, optim_name, ftype, torch.device('cuda'),
+def test_optimizer_accumulation(dim1:int, dim2:int, gtype:torch.dtype, optim_name:str, ftype:str, cuda_device:str):
+    optimizer_accumulation(optimizers, dim1, dim2, gtype, optim_name, ftype, torch.device(cuda_device),
                            framework_opt_step=torch.rand(1).item() > 0.5)

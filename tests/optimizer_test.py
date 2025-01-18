@@ -4,9 +4,35 @@
 import inspect
 import io
 
+import pytest
 import torch
 
 from optimi import prepare_for_gradient_release, remove_gradient_release
+
+
+@pytest.fixture()
+def cuda_device(worker_id, request):
+    """Map xdist workers to available CUDA devices in a round-robin fashion,
+    or use a single specified GPU if --gpu-id is provided"""
+    # Check if specific GPU was requested
+    specific_gpu = request.config.getoption("--gpu-id")
+    if specific_gpu is not None:
+        return f"cuda:{specific_gpu}"
+
+    if worker_id == "master":
+        return "cuda"
+
+    # Get number of available GPUs
+    num_gpus = torch.cuda.device_count()
+    if num_gpus == 0:
+        return "cuda"  # Fallback to default if no GPUs
+
+    # Extract worker number from worker_id (e.g., 'gw6' -> 6)
+    worker_num = int(worker_id.replace('gw', ''))
+
+    # Map worker to GPU index using modulo to round-robin
+    gpu_idx = (worker_num - 1) % num_gpus
+    return f"cuda:{gpu_idx}"
 
 
 class MLP(torch.nn.Module):
@@ -47,12 +73,10 @@ def load_optimizer(params, optimizers, optim_name, key, ftype) -> torch.optim.Op
         raise ValueError(f"{optim_name} optimizer not defined")
 
     argspec = inspect.getfullargspec(optimizer)
+    update_kwargs('fused', argspec, False)
+    update_kwargs('foreach', argspec, False)
     if ftype != '':
         update_kwargs(ftype, argspec)
-    else:
-        update_kwargs('fused', argspec, False)
-        update_kwargs('foreach', argspec, False)
-
     return optimizer(params, **kwargs)
 
 
@@ -111,7 +135,7 @@ def run_optimizer(optimizers:dict, dim1:int, dim2:int, gtype:torch.dtype, optim_
             del optimi_optimizer
             optimi_optimizer = None
             optimi_optimizer = load_optimizer([p2], optimizers, optim_name, 1, ftype)
-            optimi_optimizer.load_state_dict(torch.load(buffer))
+            optimi_optimizer.load_state_dict(torch.load(buffer, weights_only=True))
             buffer.seek(0)
             buffer.truncate(0)
             if any_precision:
@@ -277,7 +301,7 @@ cpu_ftype = ['', '_foreach']
 cuda_dim1 = [1024]
 cuda_dim2 = [64, 1024, 4096, 1]
 cuda_gtype = [torch.float32, torch.bfloat16]
-cuda_ftype = ['', '_foreach']
+cuda_ftype = ['', '_foreach', '_compile', '_triton']
 
 gr_dim1 = [128]
 gr_dim2 = [256, 1024]
