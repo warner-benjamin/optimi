@@ -1,4 +1,4 @@
-# Copyright (c) 2023 Benjamin Warner
+# Copyright (c) 2023-present Benjamin Warner
 # SPDX-License-Identifier: MIT
 
 # Based on PyTorch Optimizers
@@ -39,7 +39,9 @@ class AdamW(Adam):
             precision (float16 or bfloat16). If unspecified, automatically applies for low precision
             parameters (default: None)
         foreach: Enables the foreach implementation. If unspecified, tries to use foreach over
-            for-loop implementation since it is significantly faster (default: None)
+                for-loop implementation since it is significantly faster (default: None)
+        triton: Enables Triton implementation. If unspecified, tries to use Triton implementation as it
+            is significantly faster then both for-loop and foreach implementations (default: None)
         gradient_release: Fuses optimizer step and zero_grad as part of the parameter's backward
             pass. Requires model hooks created with `register_gradient_release`. Incompatible with
             closure (default: False)
@@ -56,6 +58,7 @@ class AdamW(Adam):
         max_lr: float | None = None,
         kahan_sum: bool | None = None,
         foreach: bool | None = None,
+        triton: bool | None = None,
         gradient_release: bool = False,
     ):
         super().__init__(
@@ -69,6 +72,7 @@ class AdamW(Adam):
             max_lr=max_lr,
             kahan_sum=kahan_sum,
             foreach=foreach,
+            triton=triton,
             gradient_release=gradient_release,
         )
 
@@ -90,6 +94,7 @@ def adamw(
     max_lr: float | None = None,
     kahan_sum: bool = False,
     foreach: bool = False,
+    triton: bool = False,
     gradient_release: bool = False,
     optimizer_accumulation: bool = False,
 ):
@@ -113,6 +118,7 @@ def adamw(
         max_lr: Maximum scheduled learning rate for `decouple_lr`
         kahan_sum: Enables Kahan summation for low precision `params`
         foreach: Enables the faster foreach implementation
+        triton: Enables the faster Triton implementation
         gradient_release: Fuses optimizer step as part of the parameter's backward pass
         optimizer_accumulation: Accumulate gradients into state during gradient release step
     """
@@ -133,6 +139,7 @@ def adamw(
         max_lr=max_lr,
         kahan_sum=kahan_sum,
         foreach=foreach,
+        triton=triton,
         gradient_release=gradient_release,
         optimizer_accumulation=optimizer_accumulation,
     )

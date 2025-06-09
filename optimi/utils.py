@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 from typing import Any, Iterable
 
 import torch
@@ -9,6 +10,7 @@ from packaging.version import parse
 from torch import nn
 
 MIN_TORCH_2_1 = parse(torch.__version__) >= parse("2.1")
+MIN_TORCH_2_6 = parse(torch.__version__) >= parse("2.6")
 
 
 def debias(beta: float, step: int) -> float:
@@ -55,3 +57,16 @@ def param_groups_weight_decay(
         {"params": no_decay, "weight_decay": 0.0},
         {"params": decay, "weight_decay": weight_decay},
     ]
+
+
+@contextmanager
+def device_guard(tensor: torch.Tensor):
+    """Context manager to ensure that the Triton kernel launches on the correct device."""
+    if tensor.device.type == "cuda":  # NVIDIA or AMD/ROCm
+        with torch.cuda.device_of(tensor):
+            yield
+    elif tensor.device.type == "xpu":  # Intel GPUs
+        with torch.xpu.device_of(tensor):
+            yield
+    else:  # CPU or other back-ends
+        yield

@@ -7,7 +7,14 @@ import torch
 from torch import Tensor
 from torch.optim.optimizer import Optimizer
 
-from optimi.utils import MIN_TORCH_2_1
+try:
+    import triton  # noqa: F401
+
+    SUPPORTS_TRITON = True
+except ImportError:
+    SUPPORTS_TRITON = False
+
+from optimi.utils import MIN_TORCH_2_1, MIN_TORCH_2_6
 
 
 class OptimiOptimizer(Optimizer):
@@ -38,6 +45,11 @@ class OptimiOptimizer(Optimizer):
                 category=UserWarning,
             )
 
+        if not MIN_TORCH_2_6 and defaults["triton"]:
+            raise ValueError(f"triton={defaults['triton']} requires PyTorch 2.6 or later. Set triton=False or upgrade PyTorch.")
+        elif not SUPPORTS_TRITON and defaults["triton"]:
+            raise ImportError("Triton could not be imported on this system. Set triton=False or install Triton.")
+
         super().__init__(params, defaults)
 
         # by default perform the normal parameter update step
@@ -45,6 +57,8 @@ class OptimiOptimizer(Optimizer):
 
         # if gradient_release is enabled, disable foreach step so normal optimizer step won't error
         if self.defaults["gradient_release"]:
+            if self.defaults["foreach"]:
+                warn("Gradient release (gradient_release=True) and foreach (foreach=True) cannot be used together. Disabling foreach.", category=UserWarning)  # fmt: skip  # noqa: E501
             self.defaults["foreach"] = False
             for group in self.param_groups:
                 group["foreach"] = False
