@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from contextlib import contextmanager
 from typing import Any, Iterable
 
 import torch
@@ -59,14 +58,11 @@ def param_groups_weight_decay(
     ]
 
 
-@contextmanager
 def device_guard(tensor: torch.Tensor):
-    """Context manager to ensure that the Triton kernel launches on the correct device."""
-    if tensor.device.type == "cuda":  # NVIDIA or AMD/ROCm
-        with torch.cuda.device_of(tensor):
-            yield
-    elif tensor.device.type == "xpu":  # Intel GPUs
-        with torch.xpu.device_of(tensor):
-            yield
+    """Returns context manager to ensure that the Triton kernel launches on the correct device."""
+    if tensor.is_cuda:  # NVIDIA or AMD/ROCm
+        return torch.cuda.device_of(tensor)
+    elif tensor.is_xpu:  # Intel GPUs
+        return torch.xpu.device_of(tensor)
     else:  # CPU or other back-ends
-        yield
+        return None
