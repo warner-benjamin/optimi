@@ -12,24 +12,22 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        py: ['3.8', '3.9', '3.10', '3.11', '3.12']
+        python-version: ['3.10', '3.11', '3.12', '3.13']
 
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - name: Install Python and uv with caching
+        uses: astral-sh/setup-uv@v5
         with:
-          python-version: ${{ matrix.py }}
-          architecture: 'x64'
-          cache: "pip"
-          cache-dependency-path: pyproject.toml
+          version: "0.7.13" # for reproducibility
+          python-version: ${{ matrix.python-version }}
+          enable-cache: true
+          cache-dependency-glob: "pyproject.toml"
 
-      - name: Install Library
-        run: |
-          pip install --upgrade pip
-          pip install .[test] --extra-index-url https://download.pytorch.org/whl/cpu
+      - name: Install optimi
+        run: uv sync --group cpu
 
       - name: Run Tests
         run: pytest -m cpu
@@ -37,29 +35,34 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     environment:
-      name: release
-      url: https://pypi.org/p/torch-optimi
+      name: ${{ github.event_name == 'workflow_dispatch' && 'testpypi' || 'release' }}
+      url: ${{ github.event_name == 'workflow_dispatch' && 'https://test.pypi.org/p/torch-optimi' || 'https://pypi.org/p/torch-optimi' }}
     permissions:
       id-token: write
     needs: [test]
 
     steps:
-    - name: Checkout Code
-      uses: actions/checkout@v4
+      - name: Checkout Code
+        uses: actions/checkout@v4
 
-    - name: Set up Python
-      uses: actions/setup-python@v5
-      with:
-        python-version: "3.12"
-        architecture: 'x64'
-        cache: "pip"
-        cache-dependency-path: pyproject.toml
+      - name: Install Python and uv with caching
+        uses: astral-sh/setup-uv@v5
+        with:
+          version: "0.7.13" # for reproducibility
+          python-version: 3.13
+          enable-cache: true
+          cache-dependency-glob: "pyproject.toml"
 
-    - name: Install
-      run: pip install setuptools wheel build
+      - name: Install optimi
+        run: uv sync --group cpu
 
-    - name: Build
-      run: python -m build
+      - name: Build
+        run: uv build
 
-    - name: Publish
-      uses: pypa/gh-action-pypi-publish@release/v1.8
+      - name: Publish to PyPI
+        if: github.event_name == 'release'
+        run: uv publish
+
+      - name: Publish to Test PyPI
+        if: github.event_name == 'workflow_dispatch'
+        run: uv publish --publish-url https://test.pypi.org/legacy/
