@@ -1,8 +1,9 @@
-# Optimizer utilities
+# Copyright (c) 2023-present Benjamin Warner
+# SPDX-License-Identifier: MIT
 
-from __future__ import annotations
-
-from typing import Any, Iterable
+from collections.abc import Iterable
+from contextlib import nullcontext
+from typing import Any
 
 import torch
 from packaging.version import parse
@@ -20,7 +21,7 @@ def debias(beta: float, step: int) -> float:
 def debias_beta(beta: float, step: int) -> float:
     """Applies the Adam-style debias correction into beta.
 
-    Simplified version of `betahat = beta*(1-beta**(step-1))/(1-beta**step)`
+    Simplified version of `beta_hat = beta*(1-beta**(step-1))/(1-beta**step)`
     """
     return (beta**step - beta) / (beta**step - 1)
 
@@ -65,4 +66,4 @@ def device_guard(tensor: torch.Tensor):
     elif tensor.is_xpu:  # Intel GPUs
         return torch.xpu.device_of(tensor)
     else:  # CPU or other back-ends
-        return None
+        return nullcontext()
