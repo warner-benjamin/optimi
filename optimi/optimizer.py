@@ -1,6 +1,5 @@
-from __future__ import annotations
-
-from typing import Any, Callable, Iterable
+from collections.abc import Callable, Iterable
+from typing import Any
 from warnings import warn
 
 import torch
@@ -45,9 +44,9 @@ class OptimiOptimizer(Optimizer):
                 category=UserWarning,
             )
 
-        if not MIN_TORCH_2_6 and defaults["triton"]:
+        if not MIN_TORCH_2_6 and defaults.get("triton", False):
             raise ValueError(f"triton={defaults['triton']} requires PyTorch 2.6 or later. Set triton=False or upgrade PyTorch.")
-        elif not SUPPORTS_TRITON and defaults["triton"]:
+        elif not SUPPORTS_TRITON and defaults.get("triton", False):
             raise ImportError("Triton could not be imported on this system. Set triton=False or install Triton.")
 
         super().__init__(params, defaults)
