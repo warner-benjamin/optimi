@@ -1,4 +1,4 @@
-# Copyright (c) 2023 Benjamin Warner
+# Copyright (c) 2023-present Benjamin Warner
 # SPDX-License-Identifier: MIT
 
 # Based on PyTorch Optimizers
@@ -13,16 +13,30 @@
 # Learning rate decoupled weight decay inspired by Composer's `DecoupledSGDW` & `DecoupledAdamW`
 # Composer - Apache License 2.0 - Copyright (c) 2022 MosaicML Composer authors
 
-from __future__ import annotations
+# Triton kernels inspired by:
+# AdamW-Triton-PyTorch - MIT License - Copyright (c) 2024 Less Wright - https://github.com/lessw2020/AdamW-Triton-PyTorch
+# lion-pytorch - MIT License - Copyright (c) 2023 Phil Wang - https://github.com/lucidrains/lion-pytorch
 
-from typing import Any, Callable, Iterable
+
+
+from collections.abc import Callable, Iterable
+from typing import Any
 
 import torch
 from torch import Tensor
 from torch.optim.optimizer import _default_to_fused_or_foreach
 from torch.utils._foreach_utils import _group_tensors_by_device_and_dtype
 
+try:
+    import triton
+    import triton.language as tl
+
+    SUPPORTS_TRITON = True
+except ImportError:
+    SUPPORTS_TRITON = False
+
 from optimi.optimizer import OptimiOptimizer
+from optimi.utils import device_guard
 
 __all__ = ["SGD", "sgd"]
 
@@ -48,7 +62,9 @@ class SGD(OptimiOptimizer):
             precision (float16 or bfloat16). If unspecified, automatically applies for low precision
             parameters (default: None)
         foreach: Enables the foreach implementation. If unspecified, tries to use foreach over
-            for-loop implementation since it is significantly faster (default: None)
+            for-loop implementation since it can be significantly faster (default: None)
+        triton: Enables Triton implementation. If unspecified, tries to use Triton as it is
+            significantly faster than both for-loop and foreach implementations (default: None)
         gradient_release: Fuses optimizer step and zero_grad as part of the parameter's backward
             pass. Requires model hooks created with `register_gradient_release`. Incompatible with
             closure (default: False)
@@ -67,6 +83,7 @@ class SGD(OptimiOptimizer):
         torch_init: bool = False,
         kahan_sum: bool | None = None,
         foreach: bool | None = None,
+        triton: bool | None = None,
         gradient_release: bool = False,
     ):
         if not 0.0 <= momentum < 1.0:
@@ -83,6 +100,7 @@ class SGD(OptimiOptimizer):
             kahan_sum=kahan_sum,
             torch_init=torch_init,
             foreach=foreach,
+            triton=triton,
             gradient_release=gradient_release,
             setup=False,
         )
@@ -92,17 +110,31 @@ class SGD(OptimiOptimizer):
         if "kahan_comp" not in state:
             if group["dampening"] and group["torch_init"]:
                 state["exp_avg"] = param.grad.detach().clone()
-            else:
+                # PyTorch initializes the momentum buffer with the gradient after l2 weight decay
+                if group["weight_decay"] != 0 and not group["decouple_lr"] and not group["decouple_wd"]:
+                    state["exp_avg"].add_(param, alpha=group["weight_decay"])
+            elif group["momentum"] != 0:
                 state["exp_avg"] = torch.zeros_like(param, memory_format=torch.preserve_format)
+            elif group["triton"]:
+                state["exp_avg"] = torch.zeros(1, dtype=param.dtype, device=param.device)
+            else:
+                state["exp_avg"] = None
 
             if (group["kahan_sum"] or group["kahan_sum"] is None) and param.dtype in [torch.float16, torch.bfloat16]:
                 state["kahan_comp"] = torch.zeros_like(param, memory_format=torch.preserve_format)
                 group["kahan_sum"] = True
+            elif group["triton"]:
+                state["kahan_comp"] = torch.zeros(1, dtype=torch.uint8, device=param.device)
             else:
                 state["kahan_comp"] = None
 
     def _init_group(
-        self, group: dict[str, Any], params: list[Tensor], grads: list[Tensor], exp_avgs: list[Tensor], kahan_comps: list[Tensor]
+        self,
+        group: dict[str, Any],
+        params: list[Tensor],
+        grads: list[Tensor],
+        exp_avgs: list[Tensor],
+        kahan_comps: list[Tensor],
     ):
         for p in group["params"]:
             if p.grad is None:
@@ -158,6 +190,7 @@ class SGD(OptimiOptimizer):
                     max_lr=group["max_lr"],
                     kahan_sum=group["kahan_sum"],
                     foreach=group["foreach"],
+                    triton=group["triton"],
                     gradient_release=False,
                     optimizer_accumulation=False,
                 )
@@ -180,6 +213,7 @@ class SGD(OptimiOptimizer):
                 max_lr=group["max_lr"],
                 kahan_sum=group["kahan_sum"],
                 foreach=False,
+                triton=group["triton"],
                 gradient_release=True,
                 optimizer_accumulation=self._optimizer_accumulation,
             )
@@ -202,6 +236,7 @@ def sgd(
     max_lr: float | None = None,
     kahan_sum: bool = False,
     foreach: bool = False,
+    triton: bool = False,
     gradient_release: bool = False,
     optimizer_accumulation: bool = False,
 ):
@@ -223,6 +258,7 @@ def sgd(
         max_lr: Maximum scheduled learning rate for `decouple_lr`
         kahan_sum: Enables Kahan summation for low precision `params`
         foreach: Enables the faster foreach implementation
+        triton: Enables the faster Triton implementation
         gradient_release: Fuses optimizer step as part of the parameter's backward pass
         optimizer_accumulation: Accumulate gradients into state during gradient release step
     """
@@ -236,12 +272,20 @@ def sgd(
     if kahan_comps is None:
         kahan_comps = [None] * len(params)
 
-    if foreach:
-        func = _foreach_sgd
-    elif gradient_release:
-        func = _single_param_sgd
+    if gradient_release:
+        if triton:
+            func = _single_param_triton_sgd
+        elif foreach:
+            raise ValueError(f"Gradient release {gradient_release=} and foreach {foreach=} cannot be used together")
+        else:
+            func = _single_param_sgd
     else:
-        func = _single_sgd
+        if triton:
+            func = _triton_sgd
+        elif foreach:
+            func = _foreach_sgd
+        else:
+            func = _single_sgd
 
     func(
         params,
@@ -385,3 +429,169 @@ def _foreach_sgd(
         else:
             # SGD step (regular step exp_agv = grad)
             torch._foreach_add_(dev_params, dev_exp_avgs, alpha=-lr)
+
+
+if SUPPORTS_TRITON:
+
+    @triton.autotune(
+        configs=[
+            triton.Config({"BLOCK_SIZE": 128}, num_warps=4),
+            triton.Config({"BLOCK_SIZE": 256}, num_warps=4),
+            triton.Config({"BLOCK_SIZE": 512}, num_warps=8),
+            triton.Config({"BLOCK_SIZE": 1024}, num_warps=8),
+        ],
+        key=["n_elements", "kahan_sum", "decouple_wd", "do_weight_decay", "do_momentum", "update_parameters"],
+        restore_value=["param_ptr", "exp_avg_ptr", "kahan_ptr"],
+    )
+    @triton.jit
+    def _sgd_kernel(
+        param_ptr,
+        grad_ptr,
+        exp_avg_ptr,
+        kahan_ptr,
+        lr,
+        momentum,
+        weight_decay,
+        dampening: tl.constexpr,
+        decouple_wd: tl.constexpr,
+        kahan_sum: tl.constexpr,
+        do_weight_decay: tl.constexpr,
+        do_momentum: tl.constexpr,
+        update_parameters: tl.constexpr,
+        n_elements,
+        BLOCK_SIZE: tl.constexpr,
+    ):
+        pid = tl.program_id(0)
+        block_start = pid * BLOCK_SIZE
+        offsets = block_start + tl.arange(0, BLOCK_SIZE)
+        mask = offsets < n_elements
+
+        # load data
+        param = tl.load(param_ptr + offsets, mask=mask)
+        # For low precision, with or without Kahan summation, we want all
+        # computation except for the parameter updates to occur in float32.
+        grad = tl.load(grad_ptr + offsets, mask=mask).to(tl.float32)
+
+        # decoupled weight decay, fully decoupled weight decay, or L2 weight decay
+        if do_weight_decay and update_parameters:
+            if decouple_wd:
+                param = tl.cast(param * weight_decay, param.dtype)
+            else:
+                grad = tl.cast(grad + param.to(tl.float32) * weight_decay, grad.dtype)
+
+        if do_momentum:  # SGD with Momentum
+            exp_avg = tl.load(exp_avg_ptr + offsets, mask=mask).to(tl.float32)
+            if dampening:
+                exp_avg = tl.fma(exp_avg, momentum, (1.0 - momentum) * grad)
+            else:
+                exp_avg = tl.fma(exp_avg, momentum, grad)
+        else:
+            exp_avg = grad
+
+        if update_parameters:
+            if kahan_sum:
+                # load kahan compensation, casting to fp32
+                kahan_comp = tl.load(kahan_ptr + offsets, mask=mask).to(tl.float32)
+
+                # SGD step (regular step exp_avg = grad)
+                kahan_comp = kahan_comp - (lr * exp_avg)
+
+                # update weights with downcasted kahan update
+                prev_param = param
+                param = param + tl.cast(kahan_comp, param.dtype)
+
+                # save error back to kahan compensation for next iteration
+                kahan_comp = kahan_comp + prev_param.to(tl.float32) - param.to(tl.float32)
+
+                # store kahan compensation
+                tl.store(kahan_ptr + offsets, tl.cast(kahan_comp, param.dtype), mask=mask)
+            else:
+                # Standard SGD step, optionally downcasting to param.dtype from fp32 intermediates
+                param = param + tl.cast((-lr * exp_avg), param.dtype)
+
+            # Store updated parameters
+            tl.store(param_ptr + offsets, param, mask=mask)
+
+        if do_momentum:
+            # Optionally downcast exp_avg to param.dtype
+            tl.store(exp_avg_ptr + offsets, tl.cast(exp_avg, param.dtype), mask=mask)
+
+    def _triton_sgd(
+        params: list[Tensor],
+        grads: list[Tensor],
+        exp_avgs: list[Tensor],
+        kahan_comps: list[Tensor],
+        *,
+        lr: float,
+        momentum: float,
+        weight_decay: float,
+        dampening: bool,
+        decouple_wd: bool,
+        kahan_sum: bool,
+        **kwargs,
+    ):
+        for i, param in enumerate(params):
+            grad = grads[i]
+            exp_avg = exp_avgs[i]
+            kahan_comp = kahan_comps[i]
+
+            n_elements = param.numel()
+            grid = lambda meta: (triton.cdiv(n_elements, meta["BLOCK_SIZE"]),)  # noqa: E731
+
+            # Without this Triton always tries to launch from device:0 and we get
+            # ValueError: Pointer argument (at 0) cannot be accessed from Triton (cpu tensor?)
+            with device_guard(param):
+                _sgd_kernel[grid](
+                    param_ptr=param,
+                    grad_ptr=grad,
+                    exp_avg_ptr=exp_avg,
+                    kahan_ptr=kahan_comp,
+                    lr=lr,
+                    momentum=momentum,
+                    weight_decay=weight_decay,
+                    dampening=dampening,
+                    decouple_wd=decouple_wd,
+                    kahan_sum=kahan_sum and param.dtype in [torch.float16, torch.bfloat16],
+                    do_weight_decay=weight_decay != 0.0,
+                    do_momentum=momentum != 0.0,
+                    update_parameters=True,
+                    n_elements=n_elements,
+                )
+
+    def _single_param_triton_sgd(
+        param: Tensor,
+        grad: Tensor,
+        exp_avg: Tensor,
+        kahan_comp: Tensor,
+        *,
+        lr: float,
+        momentum: float,
+        weight_decay: float,
+        dampening: bool,
+        decouple_wd: bool,
+        kahan_sum: bool,
+        update_parameters: bool,
+        **kwargs,
+    ):
+        n_elements = param.numel()
+        grid = lambda meta: (triton.cdiv(n_elements, meta["BLOCK_SIZE"]),)  # noqa: E731
+
+        # Without this Triton always tries to launch from device:0 and we get
+        # ValueError: Pointer argument (at 0) cannot be accessed from Triton (cpu tensor?)
+        with device_guard(param):
+            _sgd_kernel[grid](
+                param_ptr=param,
+                grad_ptr=grad,
+                exp_avg_ptr=exp_avg,
+                kahan_ptr=kahan_comp,
+                lr=lr,
+                momentum=momentum,
+                weight_decay=weight_decay,
+                dampening=dampening,
+                decouple_wd=decouple_wd,
+                kahan_sum=kahan_sum and param.dtype in [torch.float16, torch.bfloat16],
+                do_weight_decay=weight_decay != 0.0,
+                do_momentum=momentum != 0.0,
+                update_parameters=update_parameters,
+                n_elements=n_elements,
+            )
