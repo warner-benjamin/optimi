@@ -58,7 +58,7 @@ version = { attr = "optimi.__version__" }
 testpaths = ["tests"]
 markers = [
     "cpu",
-    "cuda",
+    "gpu",
     "adam",
     "adan",
     "lion",
