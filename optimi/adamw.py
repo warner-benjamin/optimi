@@ -10,9 +10,7 @@
 # Learning rate decoupled weight decay inspired by Composer's `DecoupledSGDW` & `DecoupledAdamW`
 # Composer - Apache License 2.0 - Copyright (c) 2022 MosaicML Composer authors
 
-from __future__ import annotations
-
-from typing import Iterable
+from collections.abc import Iterable
 
 from torch import Tensor
 
@@ -39,9 +37,9 @@ class AdamW(Adam):
             precision (float16 or bfloat16). If unspecified, automatically applies for low precision
             parameters (default: None)
         foreach: Enables the foreach implementation. If unspecified, tries to use foreach over
-                for-loop implementation since it is significantly faster (default: None)
-        triton: Enables Triton implementation. If unspecified, tries to use Triton implementation as it
-            is significantly faster then both for-loop and foreach implementations (default: None)
+            for-loop implementation since it can be significantly faster (default: None)
+        triton: Enables Triton implementation. If unspecified, tries to use Triton as it is
+            significantly faster than both for-loop and foreach implementations (default: None)
         gradient_release: Fuses optimizer step and zero_grad as part of the parameter's backward
             pass. Requires model hooks created with `register_gradient_release`. Incompatible with
             closure (default: False)

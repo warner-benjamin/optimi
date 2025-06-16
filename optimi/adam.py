@@ -14,9 +14,8 @@
 # AdamW-Triton-PyTorch - MIT License - Copyright (c) 2024 Less Wright - https://github.com/lessw2020/AdamW-Triton-PyTorch
 # lion-pytorch - MIT License - Copyright (c) 2023 Phil Wang - https://github.com/lucidrains/lion-pytorch
 
-from __future__ import annotations
-
-from typing import Any, Callable, Iterable
+from collections.abc import Callable, Iterable
+from typing import Any
 
 import torch
 from torch import Tensor
@@ -56,8 +55,8 @@ class Adam(OptimiOptimizer):
             parameters (default: None)
         foreach: Enables the foreach implementation. If unspecified, tries to use foreach over
             for-loop implementation since it can be significantly faster (default: None)
-        triton: Enables Triton implementation. If unspecified, tries to use Triton implementation as
-            it is significantly faster then both for-loop & foreach implementations (default: None)
+        triton: Enables Triton implementation. If unspecified, tries to use Triton as it is
+            significantly faster than both for-loop and foreach implementations (default: None)
         gradient_release: Fuses optimizer step and zero_grad as part of the parameter's backward
             pass. Requires model hooks created with `register_gradient_release`. Incompatible with
             closure (default: False)
