@@ -63,7 +63,7 @@ def device_guard(tensor: torch.Tensor):
     """Returns context manager to ensure that the Triton kernel launches on the correct device."""
     if tensor.is_cuda:  # NVIDIA or AMD/ROCm
         return torch.cuda.device_of(tensor)
-    elif tensor.is_xpu:  # Intel GPUs
+    elif hasattr(tensor, "is_xpu") and tensor.is_xpu:  # Intel GPUs
         return torch.xpu.device_of(tensor)
     else:  # CPU or other back-ends
         return nullcontext()
