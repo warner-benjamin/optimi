@@ -31,15 +31,15 @@ jobs:
       # - name: Ruff Check
       #   id: ruff
       #   run: |
-      #     ruff check --output-format=github .
-      #     ruff format --check .
+      #     uv run ruff check --output-format=github .
+      #     uv run ruff format --check .
 
       - name: Run Tests
         id: pytest
         run: |
           REPORT="$(mktemp)"
           echo "report-path=$REPORT" >> $GITHUB_OUTPUT
-          pytest -v -m cpu --md=$REPORT
+          uv run pytest -v -m cpu --md=$REPORT
 
       # Modified from https://github.com/pavelzw/pytest-action, MIT License
       - name: Add report to summary
