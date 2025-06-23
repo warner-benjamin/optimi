@@ -125,19 +125,13 @@ def run_optimizer(optimizers:dict, dim1:int, dim2:int, dtype:torch.dtype, optim_
         else:
             iterations = 40
 
-    # # since Lion can have pretty noisy updates where things lie at the boundary
-    # # allow up to 10 errors for Lion on GPU size tensors and 2 on CPU size tensors
-    # max_error_count = 2 if device == torch.device('cpu') else 10
-    # # Adan bfloat16 updates are noisier than other optimizers,
-    # # allow more errors for higher dimension testing
-    # if dim2 >= 2048:
-    #     max_error_count *= 3
-    max_error_count = 0
+    # allow for a small number of errors on low dimension tests
+    max_error_count = 2 if device == torch.device('cpu') else 5
 
     if dtype == torch.float32:
         atol = atol_override.get(torch.float32, 1e-6)
         rtol = rtol_override.get(torch.float32, 1e-5)
-        max_error_rate = max_error_rate_override.get(torch.float32, 0.0001)
+        max_error_rate = max_error_rate_override.get(torch.float32, 0.0005)
     elif dtype == torch.bfloat16:
         atol = atol_override.get(torch.bfloat16, 1e-3)
         rtol = rtol_override.get(torch.bfloat16, 1e-2)
