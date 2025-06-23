@@ -1,4 +1,5 @@
-from __future__ import annotations
+# Copyright (c) 2023-present Benjamin Warner
+# SPDX-License-Identifier: MIT
 
 from functools import partial
 from warnings import warn

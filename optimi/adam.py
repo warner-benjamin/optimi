@@ -272,6 +272,7 @@ def adam(
     beta1_hat = debias_beta(beta1, step_int)
     beta1_comp = 1 - beta1_hat
     beta2_hat = debias_beta(beta2, step_int)
+    beta2_comp = 1 - beta2_hat
 
     # calculate decoupled weight decay or fully decoupled weight decay
     if weight_decay != 0:
@@ -308,6 +309,7 @@ def adam(
         beta1_hat=beta1_hat,
         beta1_comp=beta1_comp,
         beta2_hat=beta2_hat,
+        beta2_comp=beta2_comp,
         weight_decay=weight_decay,
         eps=eps,
         decouple_wd=(decouple_wd or decouple_lr),
@@ -326,6 +328,7 @@ def _single_adam(
     lr: float,
     beta1_comp: float,
     beta2_hat: float,
+    beta2_comp: float,
     weight_decay: float,
     eps: float,
     decouple_wd: bool,
@@ -348,6 +351,7 @@ def _single_adam(
             lr=lr,
             beta1_comp=beta1_comp,
             beta2_hat=beta2_hat,
+            beta2_comp=beta2_comp,
             weight_decay=weight_decay,
             eps=eps,
             decouple_wd=decouple_wd,
@@ -366,6 +370,7 @@ def _single_param_adam(
     lr: float,
     beta1_comp: float,
     beta2_hat: float,
+    beta2_comp: float,
     weight_decay: float,
     eps: float,
     decouple_wd: bool,
@@ -382,7 +387,7 @@ def _single_param_adam(
 
     # update gradient moving averages with debiased betas
     exp_avg.lerp_(grad, weight=beta1_comp)
-    exp_avg_sq.mul_(beta2_hat).addcmul_(grad, grad, value=1 - beta2_hat)
+    exp_avg_sq.mul_(beta2_hat).addcmul_(grad, grad, value=beta2_comp)
 
     if update_parameters:
         if kahan_sum and param.dtype in [torch.float16, torch.bfloat16]:
@@ -413,6 +418,7 @@ def _foreach_adam(
     lr: float,
     beta1_comp: float,
     beta2_hat: float,
+    beta2_comp: float,
     weight_decay: float,
     eps: float,
     decouple_wd: bool,
@@ -436,7 +442,7 @@ def _foreach_adam(
         # update gradient moving averages with debiased betas
         torch._foreach_lerp_(dev_exp_avgs, dev_grads, weight=beta1_comp)
         torch._foreach_mul_(dev_exp_avg_sqs, scalar=beta2_hat)
-        torch._foreach_addcmul_(dev_exp_avg_sqs, dev_grads, dev_grads, value=1 - beta2_hat)
+        torch._foreach_addcmul_(dev_exp_avg_sqs, dev_grads, dev_grads, value=beta2_comp)
 
         # Adam denominator using dev_grads as a temp buffer
         torch._foreach_copy_(dev_grads, dev_exp_avg_sqs)
@@ -480,7 +486,9 @@ if SUPPORTS_TRITON:
         kahan_ptr,
         lr,
         beta1_hat,
+        beta1_comp,
         beta2_hat,
+        beta2_comp,
         weight_decay,
         eps,
         do_weight_decay: tl.constexpr,
@@ -511,8 +519,8 @@ if SUPPORTS_TRITON:
                 grad = grad + param.to(tl.float32) * weight_decay
 
         # update gradient moving averages:
-        exp_avg = tl.fma(exp_avg, beta1_hat, (1.0 - beta1_hat) * grad)
-        exp_avg_sq = tl.fma(exp_avg_sq, beta2_hat, grad * grad * (1.0 - beta2_hat))
+        exp_avg = tl.fma(exp_avg, beta1_hat, beta1_comp * grad)
+        exp_avg_sq = tl.fma(exp_avg_sq, beta2_hat, beta2_comp * grad * grad)
 
         if update_parameters:
             if kahan_sum:
@@ -551,7 +559,9 @@ if SUPPORTS_TRITON:
         *,
         lr: float,
         beta1_hat: float,
+        beta1_comp: float,
         beta2_hat: float,
+        beta2_comp: float,
         weight_decay: float,
         eps: float,
         decouple_wd: bool,
@@ -578,7 +588,9 @@ if SUPPORTS_TRITON:
                     kahan_ptr=kahan_comp,
                     lr=lr,
                     beta1_hat=beta1_hat,
+                    beta1_comp=beta1_comp,
                     beta2_hat=beta2_hat,
+                    beta2_comp=beta2_comp,
                     weight_decay=weight_decay,
                     eps=eps,
                     do_weight_decay=weight_decay != 0.0,
@@ -597,7 +609,9 @@ if SUPPORTS_TRITON:
         *,
         lr: float,
         beta1_hat: float,
+        beta1_comp: float,
         beta2_hat: float,
+        beta2_comp: float,
         weight_decay: float,
         eps: float,
         decouple_wd: bool,
@@ -619,7 +633,9 @@ if SUPPORTS_TRITON:
                 kahan_ptr=kahan_comp,
                 lr=lr,
                 beta1_hat=beta1_hat,
+                beta1_comp=beta1_comp,
                 beta2_hat=beta2_hat,
+                beta2_comp=beta2_comp,
                 weight_decay=weight_decay,
                 eps=eps,
                 do_weight_decay=weight_decay != 0.0,
