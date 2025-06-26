@@ -22,7 +22,6 @@ from typing import Any
 
 import torch
 from torch import Tensor
-from torch.optim.optimizer import _default_to_fused_or_foreach
 from torch.utils._foreach_utils import _group_tensors_by_device_and_dtype
 
 try:
@@ -34,7 +33,7 @@ except ImportError:
     SUPPORTS_TRITON = False
 
 from optimi.optimizer import OptimiOptimizer
-from optimi.utils import debias_beta, device_guard
+from optimi.utils import _default_to_triton_or_foreach, debias_beta, device_guard
 
 __all__ = ["Adan", "adan"]
 
@@ -159,8 +158,8 @@ class Adan(OptimiOptimizer):
             group["setup"] = True
             group["step"] = torch.tensor(0, dtype=torch.int32)
 
-            if group["foreach"] is None:
-                _, group["foreach"] = _default_to_fused_or_foreach(params, False, False)
+            if group["triton"] is None and group["foreach"] is None:
+                group["triton"], group["foreach"] = _default_to_triton_or_foreach(params)
 
             if group["kahan_sum"]:
                 group["adam_wd"] = False

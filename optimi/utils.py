@@ -8,6 +8,7 @@ from typing import Any
 import torch
 from packaging.version import parse
 from torch import nn
+from torch.utils._foreach_utils import _foreach_supported_types, _get_foreach_kernels_supported_devices
 
 MIN_TORCH_2_1 = parse(torch.__version__) >= parse("2.1")
 MIN_TORCH_2_6 = parse(torch.__version__) >= parse("2.6")
@@ -67,3 +68,26 @@ def device_guard(tensor: torch.Tensor):
         return torch.xpu.device_of(tensor)
     else:  # CPU or other back-ends
         return nullcontext()
+
+
+def _get_triton_kernels_supported_devices() -> list[str]:
+    """Return the device type list that supports triton kernels in optimizer."""
+    return ["cuda", "xpu"]  # Cuda handles both NVIDIA and AMD/ROCm
+
+
+# modified from PyTorch's _default_to_fused_or_foreach
+# Copyright 2013-present PyTorch contributors, PyTorch BSD-style license
+def _default_to_triton_or_foreach(params: list[torch.Tensor]) -> tuple[bool, bool]:
+    if torch.jit.is_scripting():
+        return False, False
+
+    triton_supported_devices = _get_triton_kernels_supported_devices()
+    foreach_supported_devices = _get_foreach_kernels_supported_devices()
+    triton = MIN_TORCH_2_6 and all(
+        p is None or (type(p) in _foreach_supported_types and p.device.type in triton_supported_devices and torch.is_floating_point(p))
+        for p in params
+    )
+    foreach = not triton and all(
+        p is None or (type(p) in _foreach_supported_types and p.device.type in foreach_supported_devices) for p in params
+    )
+    return triton, foreach

@@ -19,7 +19,6 @@ from typing import Any
 
 import torch
 from torch import Tensor
-from torch.optim.optimizer import _default_to_fused_or_foreach
 from torch.utils._foreach_utils import _group_tensors_by_device_and_dtype
 
 try:
@@ -31,7 +30,7 @@ except ImportError:
     SUPPORTS_TRITON = False
 
 from optimi.optimizer import OptimiOptimizer
-from optimi.utils import debias_beta, device_guard
+from optimi.utils import _default_to_triton_or_foreach, debias_beta, device_guard
 
 __all__ = ["StableAdamW", "stableadamw"]
 
@@ -148,6 +147,13 @@ class StableAdamW(OptimiOptimizer):
         rms_sum: list[Tensor],
         counter: list[Tensor],
     ):
+        if not group["setup"]:
+            group["setup"] = True
+            group["step"] = torch.tensor(0, dtype=torch.int32)
+
+            if group["triton"] is None and group["foreach"] is None:
+                group["triton"], group["foreach"] = _default_to_triton_or_foreach(params)
+
         for p in group["params"]:
             if p.grad is None:
                 continue
@@ -167,13 +173,6 @@ class StableAdamW(OptimiOptimizer):
                 rms.append(state["rms"])
                 rms_sum.append(state["rms_sum"])
                 counter.append(state["counter"])
-
-        if not group["setup"]:
-            group["setup"] = True
-            group["step"] = torch.tensor(0, dtype=torch.int32)
-
-            if group["foreach"] is None:
-                _, group["foreach"] = _default_to_fused_or_foreach(params, False, False)
 
     @torch.no_grad()
     def step(self, closure: Callable | None = None, param: Tensor | None = None):
