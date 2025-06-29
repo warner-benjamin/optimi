@@ -464,7 +464,6 @@ def _single_param_stableadamw(
     if update_parameters:
         # compute per tensor RMS stabilization term
         rms = grad.pow(2).div_(exp_avg_sq.maximum(eps_sq)).mean().sqrt()
-        # print(f"rms: {rms.item():.8f}")
 
         # calculate RMS stabilized learning rate
         lr = lr / max(1, rms.item())

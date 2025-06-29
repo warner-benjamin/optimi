@@ -403,9 +403,6 @@ def _single_param_adam(
             # Adam step
             param.addcdiv_(exp_avg, exp_avg_sq.sqrt().add_(eps), value=-lr)
 
-    if kahan_sum and param.dtype in [torch.float16, torch.bfloat16]:
-        print(f"kahan_comp: {kahan_comp.sum()}")
-
 
 def _foreach_adam(
     params: list[Tensor],
