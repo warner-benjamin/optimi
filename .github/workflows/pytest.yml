@@ -28,11 +28,11 @@ jobs:
       - name: Install optimi
         run: uv sync --group cpu
 
-      # - name: Ruff Check
-      #   id: ruff
-      #   run: |
-      #     uv run ruff check --output-format=github .
-      #     uv run ruff format --check .
+      - name: Ruff Check
+        id: ruff
+        run: |
+          uv run ruff check --output-format=github .
+          uv run ruff format --check .
 
       - name: Run Tests
         id: pytest
