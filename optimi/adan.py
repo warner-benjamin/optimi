@@ -33,7 +33,7 @@ except ImportError:
     SUPPORTS_TRITON = False
 
 from optimi.optimizer import OptimiOptimizer
-from optimi.utils import _default_to_triton_or_foreach, debias_beta, device_guard
+from optimi.utils import _default_to_triton_or_foreach, _device_guard, _get_triton_block_size, debias_beta
 
 __all__ = ["Adan", "adan"]
 
@@ -556,16 +556,6 @@ def _foreach_adan(
 
 if SUPPORTS_TRITON:
 
-    @triton.autotune(
-        configs=[
-            triton.Config({"BLOCK_SIZE": 128}, num_warps=4),
-            triton.Config({"BLOCK_SIZE": 256}, num_warps=4),
-            triton.Config({"BLOCK_SIZE": 512}, num_warps=8),
-            triton.Config({"BLOCK_SIZE": 1024}, num_warps=8),
-        ],
-        key=["n_elements", "kahan_sum", "decouple_wd", "do_weight_decay", "update_parameters"],
-        restore_value=["param_ptr", "exp_avg_ptr", "exp_avg_diff_ptr", "exp_avg_sq_ptr", "prev_grad_ptr", "kahan_ptr"],
-    )
     @triton.jit
     def _adan_kernel(
         param_ptr,
@@ -694,11 +684,12 @@ if SUPPORTS_TRITON:
 
         for i, param in enumerate(params):
             n_elements = param.numel()
-            grid = lambda meta: (triton.cdiv(n_elements, meta["BLOCK_SIZE"]),)  # noqa: E731
+            block_size = _get_triton_block_size(n_elements)
+            grid = (triton.cdiv(n_elements, block_size),)
 
-            # Without this Triton tries to launch from cuda:0 and we get
+            # Without this Triton tries to launch from device:0 and we get
             # ValueError: Pointer argument (at 0) cannot be accessed from Triton (cpu tensor?)
-            with device_guard(param):
+            with _device_guard(param):
                 _adan_kernel[grid](
                     param_ptr=param,
                     grad_ptr=grads[i],
@@ -722,6 +713,7 @@ if SUPPORTS_TRITON:
                     kahan_sum=kahan_sum and param.dtype in [torch.float16, torch.bfloat16],
                     update_parameters=update_parameters,
                     n_elements=n_elements,
+                    BLOCK_SIZE=block_size,
                 )
 
     def _single_param_triton_adan(
@@ -750,11 +742,13 @@ if SUPPORTS_TRITON:
         """Fused Adan step for a single parameter tensor (used with gradient release)."""
         do_weight_decay = weight_decay != 0.0
         n_elements = param.numel()
-        grid = lambda meta: (triton.cdiv(n_elements, meta["BLOCK_SIZE"]),)  # noqa: E731
+        block_size = _get_triton_block_size(n_elements)
 
-        # Without this Triton tries to launch from cuda:0 and we get
+        grid = (triton.cdiv(n_elements, block_size),)
+
+        # Without this Triton tries to launch from device:0 and we get
         # ValueError: Pointer argument (at 0) cannot be accessed from Triton (cpu tensor?)
-        with device_guard(param):
+        with _device_guard(param):
             _adan_kernel[grid](
                 param_ptr=param,
                 grad_ptr=grad,
@@ -778,4 +772,5 @@ if SUPPORTS_TRITON:
                 kahan_sum=kahan_sum and param.dtype in [torch.float16, torch.bfloat16],
                 update_parameters=update_parameters,
                 n_elements=n_elements,
+                BLOCK_SIZE=block_size,
             )

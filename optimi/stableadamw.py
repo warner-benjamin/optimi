@@ -30,7 +30,7 @@ except ImportError:
     SUPPORTS_TRITON = False
 
 from optimi.optimizer import OptimiOptimizer
-from optimi.utils import _default_to_triton_or_foreach, debias_beta, device_guard
+from optimi.utils import _default_to_triton_or_foreach, _device_guard, _get_triton_block_size, debias_beta
 
 __all__ = ["StableAdamW", "stableadamw"]
 
@@ -405,7 +405,7 @@ def _single_stableadamw(
     weight_decay: float,
     eps: float,
     decouple_lr: bool,
-    max_lr: float | None = None,
+    max_lr: float | None,
     kahan_sum: bool = False,
     update_parameters: bool = True,
     **kwargs,
@@ -452,7 +452,7 @@ def _single_param_stableadamw(
     weight_decay: float,
     eps: float,
     decouple_lr: bool,
-    max_lr: float | None = None,
+    max_lr: float | None,
     kahan_sum: bool = False,
     update_parameters: bool = True,
     **kwargs,
@@ -506,7 +506,7 @@ def _foreach_stableadamw(
     weight_decay: float,
     eps: float,
     decouple_lr: bool,
-    max_lr: float | None = None,
+    max_lr: float | None,
     kahan_sum: bool = False,
     **kwargs,
 ):
@@ -565,16 +565,6 @@ def _foreach_stableadamw(
 
 if SUPPORTS_TRITON:
 
-    @triton.autotune(
-        configs=[
-            triton.Config({"BLOCK_SIZE": 128}, num_warps=4),
-            triton.Config({"BLOCK_SIZE": 256}, num_warps=4),
-            triton.Config({"BLOCK_SIZE": 512}, num_warps=8),
-            triton.Config({"BLOCK_SIZE": 1024}, num_warps=8),
-        ],
-        key=["n_elements", "update_parameters"],
-        restore_value=["grad_ptr", "exp_avg_ptr", "exp_avg_sq_ptr", "rms_ptr", "rms_sum_ptr", "counter_ptr"],
-    )
     @triton.jit
     def _stableadamw_reduction_kernel(
         grad_ptr,
@@ -627,16 +617,6 @@ if SUPPORTS_TRITON:
         tl.store(exp_avg_ptr + offsets, tl.cast(exp_avg, grad_dtype), mask=mask)
         tl.store(exp_avg_sq_ptr + offsets, tl.cast(exp_avg_sq, grad_dtype), mask=mask)
 
-    @triton.autotune(
-        configs=[
-            triton.Config({"BLOCK_SIZE": 128}, num_warps=4),
-            triton.Config({"BLOCK_SIZE": 256}, num_warps=4),
-            triton.Config({"BLOCK_SIZE": 512}, num_warps=8),
-            triton.Config({"BLOCK_SIZE": 1024}, num_warps=8),
-        ],
-        key=["n_elements", "kahan_sum", "decouple_lr", "do_weight_decay", "update_parameters"],
-        restore_value=["param_ptr", "exp_avg_ptr", "exp_avg_sq_ptr", "kahan_ptr", "rms_ptr"],
-    )
     @triton.jit
     def _stableadamw_update_kernel(
         param_ptr,
@@ -739,11 +719,12 @@ if SUPPORTS_TRITON:
             counter_ptr = counter[i]
 
             n_elements = param.numel()
-            grid = lambda meta: (triton.cdiv(n_elements, meta["BLOCK_SIZE"]),)  # noqa: E731
+            block_size = _get_triton_block_size(n_elements)
+            grid = (triton.cdiv(n_elements, block_size),)
 
             # Without this Triton always tries to launch from device:0 and we get
             # ValueError: Pointer argument (at 0) cannot be accessed from Triton (cpu tensor?)
-            with device_guard(param):
+            with _device_guard(param):
                 _stableadamw_reduction_kernel[grid](
                     grad_ptr=grad,
                     exp_avg_ptr=exp_avg,
@@ -758,6 +739,7 @@ if SUPPORTS_TRITON:
                     beta2_comp=beta2_comp,
                     update_parameters=True,
                     n_elements=n_elements,
+                    BLOCK_SIZE=block_size,
                 )
 
                 _stableadamw_update_kernel[grid](
@@ -776,6 +758,7 @@ if SUPPORTS_TRITON:
                     kahan_sum=kahan_sum and param.dtype in [torch.float16, torch.bfloat16],
                     decouple_lr=decouple_lr,
                     n_elements=n_elements,
+                    BLOCK_SIZE=block_size,
                 )
 
     def _single_param_triton_stableadamw(
@@ -803,11 +786,13 @@ if SUPPORTS_TRITON:
         **kwargs,
     ):
         n_elements = param.numel()
-        grid = lambda meta: (triton.cdiv(n_elements, meta["BLOCK_SIZE"]),)  # noqa: E731
+        block_size = _get_triton_block_size(n_elements)
+
+        grid = (triton.cdiv(n_elements, block_size),)
 
         # Without this Triton always tries to launch from device:0 and we get
         # ValueError: Pointer argument (at 0) cannot be accessed from Triton (cpu tensor?)
-        with device_guard(param):
+        with _device_guard(param):
             _stableadamw_reduction_kernel[grid](
                 grad_ptr=grad,
                 exp_avg_ptr=exp_avg,
@@ -822,6 +807,7 @@ if SUPPORTS_TRITON:
                 beta2_comp=beta2_comp,
                 update_parameters=update_parameters,
                 n_elements=n_elements,
+                BLOCK_SIZE=block_size,
             )
             if update_parameters:
                 _stableadamw_update_kernel[grid](
@@ -840,4 +826,5 @@ if SUPPORTS_TRITON:
                     kahan_sum=kahan_sum and param.dtype in [torch.float16, torch.bfloat16],
                     decouple_lr=decouple_lr,
                     n_elements=n_elements,
+                    BLOCK_SIZE=block_size,
                 )

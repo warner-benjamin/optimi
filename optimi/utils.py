@@ -60,7 +60,7 @@ def param_groups_weight_decay(
     ]
 
 
-def device_guard(tensor: torch.Tensor):
+def _device_guard(tensor: torch.Tensor):
     """Returns context manager to ensure that the Triton kernel launches on the correct device."""
     if tensor.is_cuda:  # NVIDIA or AMD/ROCm
         return torch.cuda.device_of(tensor)
@@ -91,3 +91,15 @@ def _default_to_triton_or_foreach(params: list[torch.Tensor]) -> tuple[bool, boo
         p is None or (type(p) in _foreach_supported_types and p.device.type in foreach_supported_devices) for p in params
     )
     return triton, foreach
+
+
+def _get_triton_block_size(n_elements: int) -> int:
+    """Returns the Triton block size based on the number of elements."""
+    if n_elements < 4096:
+        return 128
+    elif n_elements < 8192:
+        return 256
+    elif n_elements < 16384:
+        return 512
+    else:
+        return 1024

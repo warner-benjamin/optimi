@@ -30,7 +30,7 @@ except ImportError:
     SUPPORTS_TRITON = False
 
 from optimi.optimizer import OptimiOptimizer
-from optimi.utils import _default_to_triton_or_foreach, debias_beta, device_guard
+from optimi.utils import _default_to_triton_or_foreach, _device_guard, _get_triton_block_size, debias_beta
 
 __all__ = ["Adam", "adam"]
 
@@ -463,16 +463,6 @@ def _foreach_adam(
 
 if SUPPORTS_TRITON:
 
-    @triton.autotune(
-        configs=[
-            triton.Config({"BLOCK_SIZE": 128}, num_warps=4),
-            triton.Config({"BLOCK_SIZE": 256}, num_warps=4),
-            triton.Config({"BLOCK_SIZE": 512}, num_warps=8),
-            triton.Config({"BLOCK_SIZE": 1024}, num_warps=8),
-        ],
-        key=["n_elements", "kahan_sum", "decouple_wd", "do_weight_decay", "update_parameters"],
-        restore_value=["param_ptr", "exp_avg_ptr", "exp_avg_sq_ptr", "kahan_ptr"],
-    )
     @triton.jit
     def _adam_kernel(
         param_ptr,
@@ -571,11 +561,12 @@ if SUPPORTS_TRITON:
             kahan_comp = kahan_comps[i]
 
             n_elements = param.numel()
-            grid = lambda meta: (triton.cdiv(n_elements, meta["BLOCK_SIZE"]),)  # noqa: E731
+            block_size = _get_triton_block_size(n_elements)
+            grid = (triton.cdiv(n_elements, block_size),)
 
             # Without this Triton always tries to launch from device:0 and we get
             # ValueError: Pointer argument (at 0) cannot be accessed from Triton (cpu tensor?)
-            with device_guard(param):
+            with _device_guard(param):
                 _adam_kernel[grid](
                     param_ptr=param,
                     grad_ptr=grad,
@@ -594,6 +585,7 @@ if SUPPORTS_TRITON:
                     kahan_sum=kahan_sum and param.dtype in [torch.float16, torch.bfloat16],
                     update_parameters=True,
                     n_elements=n_elements,
+                    BLOCK_SIZE=block_size,
                 )
 
     def _single_param_triton_adam(
@@ -616,11 +608,12 @@ if SUPPORTS_TRITON:
         **kwargs,
     ):
         n_elements = param.numel()
-        grid = lambda meta: (triton.cdiv(n_elements, meta["BLOCK_SIZE"]),)  # noqa: E731
+        block_size = _get_triton_block_size(n_elements)
+        grid = (triton.cdiv(n_elements, block_size),)
 
         # Without this Triton always tries to launch from device:0 and we get
         # ValueError: Pointer argument (at 0) cannot be accessed from Triton (cpu tensor?)
-        with device_guard(param):
+        with _device_guard(param):
             _adam_kernel[grid](
                 param_ptr=param,
                 grad_ptr=grad,
@@ -639,4 +632,5 @@ if SUPPORTS_TRITON:
                 kahan_sum=kahan_sum and param.dtype in [torch.float16, torch.bfloat16],
                 update_parameters=update_parameters,
                 n_elements=n_elements,
+                BLOCK_SIZE=block_size,
             )

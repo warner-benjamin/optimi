@@ -31,7 +31,7 @@ except ImportError:
     SUPPORTS_TRITON = False
 
 from optimi.optimizer import OptimiOptimizer
-from optimi.utils import _default_to_triton_or_foreach, debias, debias_beta, device_guard
+from optimi.utils import _default_to_triton_or_foreach, _device_guard, _get_triton_block_size, debias, debias_beta
 
 __all__ = ["Ranger", "ranger"]
 
@@ -571,16 +571,6 @@ def _foreach_ranger(
 
 if SUPPORTS_TRITON:
 
-    @triton.autotune(
-        configs=[
-            triton.Config({"BLOCK_SIZE": 128}, num_warps=4),
-            triton.Config({"BLOCK_SIZE": 256}, num_warps=4),
-            triton.Config({"BLOCK_SIZE": 512}, num_warps=8),
-            triton.Config({"BLOCK_SIZE": 1024}, num_warps=8),
-        ],
-        key=["n_elements", "kahan_sum", "decouple_wd", "do_rect", "do_weight_decay", "do_lookahead", "update_parameters"],
-        restore_value=["param_ptr", "exp_avg_ptr", "exp_avg_sq_ptr", "la_param_ptr", "kahan_ptr"],
-    )
     @triton.jit
     def _ranger_kernel(
         param_ptr,
@@ -714,9 +704,10 @@ if SUPPORTS_TRITON:
         do_weight_decay = weight_decay != 0.0
 
         if rect is None:
-            rect: float = 0.0
+            rect_val: float = 0.0
             do_rect = False
         else:
+            rect_val = float(rect)
             do_rect = True
 
         for i, param in enumerate(params):
@@ -727,11 +718,12 @@ if SUPPORTS_TRITON:
             kahan_comp = kahan_comps[i]
 
             n_elements = param.numel()
-            grid = lambda meta: (triton.cdiv(n_elements, meta["BLOCK_SIZE"]),)  # noqa: E731
+            block_size = _get_triton_block_size(n_elements)
+            grid = (triton.cdiv(n_elements, block_size),)
 
             # Without this Triton tries to launch from device:0 and we get
             # ValueError: Pointer argument (at 0) cannot be accessed from Triton (cpu tensor?)
-            with device_guard(param):
+            with _device_guard(param):
                 _ranger_kernel[grid](
                     param_ptr=param,
                     grad_ptr=grad,
@@ -746,7 +738,7 @@ if SUPPORTS_TRITON:
                     beta2_comp=beta2_comp,
                     weight_decay=weight_decay,
                     eps=eps,
-                    rect=rect,
+                    rect=rect_val,
                     alpha=alpha,
                     do_rect=do_rect,
                     do_weight_decay=do_weight_decay,
@@ -755,6 +747,7 @@ if SUPPORTS_TRITON:
                     decouple_wd=decouple_wd,
                     update_parameters=True,
                     n_elements=n_elements,
+                    BLOCK_SIZE=block_size,
                 )
 
     def _single_param_triton_ranger(
@@ -782,7 +775,9 @@ if SUPPORTS_TRITON:
         **kwargs,
     ) -> None:
         n_elements = param.numel()
-        grid = lambda meta: (triton.cdiv(n_elements, meta["BLOCK_SIZE"]),)  # noqa: E731
+        block_size = _get_triton_block_size(n_elements)
+
+        grid = (triton.cdiv(n_elements, block_size),)
 
         if rect is None:
             rect_val: float = 0.0
@@ -793,7 +788,7 @@ if SUPPORTS_TRITON:
 
         # Without this Triton tries to launch from device:0 and we get
         # ValueError: Pointer argument (at 0) cannot be accessed from Triton (cpu tensor?)
-        with device_guard(param):
+        with _device_guard(param):
             _ranger_kernel[grid](
                 param_ptr=param,
                 grad_ptr=grad,
@@ -817,4 +812,5 @@ if SUPPORTS_TRITON:
                 decouple_wd=decouple_wd,
                 update_parameters=update_parameters,
                 n_elements=n_elements,
+                BLOCK_SIZE=block_size,
             )
