@@ -6,14 +6,7 @@ import torch
 from torch import Tensor
 from torch.optim.optimizer import Optimizer
 
-try:
-    import triton  # noqa: F401
-
-    SUPPORTS_TRITON = True
-except ImportError:
-    SUPPORTS_TRITON = False
-
-from optimi.utils import MIN_TORCH_2_1, MIN_TORCH_2_6
+from optimi.utils import HAS_TRITON, MIN_TORCH_2_1, MIN_TORCH_2_6
 
 
 class OptimiOptimizer(Optimizer):
@@ -46,7 +39,7 @@ class OptimiOptimizer(Optimizer):
 
         if not MIN_TORCH_2_6 and defaults.get("triton", False):
             raise ValueError(f"triton={defaults['triton']} requires PyTorch 2.6 or later. Set triton=False or upgrade PyTorch.")
-        elif not SUPPORTS_TRITON and defaults.get("triton", False):
+        elif not HAS_TRITON and defaults.get("triton", False):
             raise ImportError("Triton could not be imported on this system. Set triton=False or install Triton.")
 
         super().__init__(params, defaults)

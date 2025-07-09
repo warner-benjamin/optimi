@@ -10,6 +10,13 @@ from packaging.version import parse
 from torch import nn
 from torch.utils._foreach_utils import _foreach_supported_types, _get_foreach_kernels_supported_devices
 
+try:
+    import triton
+
+    HAS_TRITON = True
+except ImportError:
+    HAS_TRITON = False
+
 MIN_TORCH_2_1 = parse(torch.__version__) >= parse("2.1")
 MIN_TORCH_2_6 = parse(torch.__version__) >= parse("2.6")
 
@@ -83,9 +90,13 @@ def _default_to_triton_or_foreach(params: list[torch.Tensor]) -> tuple[bool, boo
 
     triton_supported_devices = _get_triton_kernels_supported_devices()
     foreach_supported_devices = _get_foreach_kernels_supported_devices()
-    triton = MIN_TORCH_2_6 and all(
-        p is None or (type(p) in _foreach_supported_types and p.device.type in triton_supported_devices and torch.is_floating_point(p))
-        for p in params
+    triton = (
+        MIN_TORCH_2_6
+        and HAS_TRITON
+        and all(
+            p is None or (type(p) in _foreach_supported_types and p.device.type in triton_supported_devices and torch.is_floating_point(p))
+            for p in params
+        )
     )
     foreach = not triton and all(
         p is None or (type(p) in _foreach_supported_types and p.device.type in foreach_supported_devices) for p in params

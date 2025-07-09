@@ -21,16 +21,8 @@ import torch
 from torch import Tensor
 from torch.utils._foreach_utils import _group_tensors_by_device_and_dtype
 
-try:
-    import triton
-    import triton.language as tl
-
-    SUPPORTS_TRITON = True
-except ImportError:
-    SUPPORTS_TRITON = False
-
 from optimi.optimizer import OptimiOptimizer
-from optimi.utils import _default_to_triton_or_foreach, _device_guard, _get_triton_block_size, debias_beta
+from optimi.utils import HAS_TRITON, _default_to_triton_or_foreach, _device_guard, _get_triton_block_size, debias_beta
 
 __all__ = ["Adam", "adam"]
 
@@ -461,7 +453,9 @@ def _foreach_adam(
             torch._foreach_addcdiv_(dev_params, dev_exp_avgs, dev_grads, value=-lr)
 
 
-if SUPPORTS_TRITON:
+if HAS_TRITON:
+    import triton
+    import triton.language as tl
 
     @triton.jit
     def _adam_kernel(
