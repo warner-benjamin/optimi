@@ -11,7 +11,7 @@ from torch import nn
 from torch.utils._foreach_utils import _foreach_supported_types, _get_foreach_kernels_supported_devices
 
 try:
-    import triton
+    import triton  # noqa: F401
 
     HAS_TRITON = True
 except ImportError:
@@ -106,11 +106,11 @@ def _default_to_triton_or_foreach(params: list[torch.Tensor]) -> tuple[bool, boo
 
 def _get_triton_block_size(n_elements: int) -> int:
     """Returns the Triton block size based on the number of elements."""
-    if n_elements < 4096:
+    if n_elements < 2048:
         return 128
-    elif n_elements < 8192:
+    elif n_elements < 4096:
         return 256
-    elif n_elements < 16384:
+    elif n_elements < 8192:
         return 512
     else:
         return 1024
