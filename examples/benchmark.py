@@ -273,7 +273,8 @@ def run_benchmark(
     backend_name = "/".join(active_backends) if active_backends else "torch"
     backend_display = f"{backend_name}{suffix}"
 
-    console.print(f"[blue]Running optimizer benchmark for {model_name} with {optimizer.value} optimizer ({backend_display})[/blue]")
+    opt_name = optimizer.value
+    console.print(f"[blue]Running optimizer benchmark for {model_name} with {opt_name} optimizer ({backend_display})[/blue]")
 
     # Determine device and dtype before model creation
     if torch.cuda.is_available():
@@ -283,6 +284,7 @@ def run_benchmark(
         empty_cache = torch.cuda.empty_cache
         reset_peak_memory_stats = torch.cuda.reset_peak_memory_stats
         max_memory_allocated = torch.cuda.max_memory_allocated
+        max_memory_reserved = torch.cuda.max_memory_reserved
     elif torch.xpu.is_available():
         if device is None:
             device = "xpu"
@@ -290,6 +292,7 @@ def run_benchmark(
         empty_cache = torch.xpu.empty_cache
         reset_peak_memory_stats = torch.xpu.reset_peak_memory_stats
         max_memory_allocated = torch.xpu.max_memory_allocated
+        max_memory_reserved = torch.xpu.max_memory_reserved
     else:
         raise ValueError(f"No suitable {device=} found. Please ensure you have a CUDA, ROCm, or XPU device available.")
 
@@ -325,40 +328,47 @@ def run_benchmark(
     use_progress = progress is not None
     if use_progress:
         task = progress.add_task("[cyan]Benchmarking", total=total_steps)
+    try:
+        for step in range(total_steps):
+            if step == 0:
+                empty_cache()
+                reset_peak_memory_stats(device)
 
-    for step in range(total_steps):
-        if step == 0:
-            empty_cache()
-            reset_peak_memory_stats(device)
+            # Generate random gradients for all parameters with requires_grad=True
+            # This simulates the backward pass without computing forward/backward
+            for param in model.parameters():
+                if param.requires_grad:
+                    if param.grad is None:
+                        param.grad = torch.randn_like(param, device=device, dtype=dtype)
+                    else:
+                        param.grad.data = torch.randn_like(param, device=device, dtype=dtype)
 
-        # Generate random gradients for all parameters with requires_grad=True
-        # This simulates the backward pass without computing forward/backward
-        for param in model.parameters():
-            if param.requires_grad:
-                if param.grad is None:
-                    param.grad = torch.randn_like(param, device=device, dtype=dtype)
-                else:
-                    param.grad.data = torch.randn_like(param, device=device, dtype=dtype)
+            # skip the warmup_steps so we don't measure warmup and compile time
+            if step > warmup_steps:
+                synchronize()
+                start_time = time.perf_counter()
 
-        # skip the warmup_steps so we don't measure warmup and compile time
-        if step > warmup_steps:
-            synchronize()
-            start_time = time.perf_counter()
+            if compiled:
+                compiled_step()
+            else:
+                optimizer.step()
 
-        if compiled:
-            compiled_step()
+            if step > warmup_steps:
+                synchronize()
+                optimizer_times.append(time.perf_counter() - start_time)
+
+            # both optimizers use the same zero_grad method, so we don't time it
+            optimizer.zero_grad()
+            if use_progress:
+                progress.update(task, advance=1)
+    except RuntimeError as e:  # Catch out-of-memory errors
+        if "out of memory" in str(e).lower():
+            console.print(f"[red]Out of memory error while benchmarking {model_name} with {opt_name} optimizer ({backend_display}).[/red]")
+            model.to("cpu")
+            model = None
+            return None
         else:
-            optimizer.step()
-
-        if step > warmup_steps:
-            synchronize()
-            optimizer_times.append(time.perf_counter() - start_time)
-
-        # both optimizers use the same zero_grad method, so we don't time it
-        optimizer.zero_grad()
-
-        if use_progress:
-            progress.update(task, advance=1)
+            raise e
 
     optimizer_times = np.array(optimizer_times)
 
@@ -366,19 +376,26 @@ def run_benchmark(
         "opt_time_mean": optimizer_times.mean(),
         "opt_time_median": np.median(optimizer_times),
         "opt_time_90th": np.percentile(optimizer_times, 90),
+        "opt_time_stdev": optimizer_times.std(),
         "total_time": np.sum(optimizer_times),
     }
 
-    max_memory = max_memory_allocated(device=device)
-    results["max_allocated_memory"] = filesize.decimal(max_memory)
+    max_memory_allocated = max_memory_allocated(device=device)
+    max_memory_reserved = max_memory_reserved(device=device)
+    results["max_allocated_memory"] = filesize.decimal(max_memory_allocated)
+    results["max_reserved_memory"] = filesize.decimal(max_memory_reserved)
 
-    console.print(f"  Average Optimizer Time: {scale_time(results['opt_time_mean'])}")
+    console.print("Optimizer Times:")
+    console.print(f"  Average: {scale_time(results['opt_time_mean'])}")
     if verbose:
-        console.print(f"  Median Optimizer Time: {scale_time(results['opt_time_median'])}")
-        console.print(f"  90th Percentile Optimizer Time: {scale_time(results['opt_time_90th'])}")
-        console.print(f"  Total Time (excluding warmup): {scale_time(results['total_time'])}")
+        console.print(f"  Median: {scale_time(results['opt_time_median'])}")
+        console.print(f"  90th Percentile: {scale_time(results['opt_time_90th'])}")
+        console.print(f"  Standard Deviation: {scale_time(results['opt_time_stdev'])}")
+        console.print(f"  Total (excluding warmup): {scale_time(results['total_time'])}")
         if "max_allocated_memory" in results:
             console.print(f"  Max Allocated Memory: {results['max_allocated_memory']}")
+        if "max_reserved_memory" in results:
+            console.print(f"  Max Reserved Memory: {results['max_reserved_memory']}")
 
     model.to("cpu")
     model = None
@@ -392,13 +409,13 @@ def individual_optimizer(
     optimizer: Annotated[Optimizer, Option(help="Optimizer to benchmark")] = Optimizer.adamw,
     precision: Annotated[Precision, Option(help="Precision to benchmark. Use fp32 for AMP, bf16 for low precision")] = Precision.fp32,
     num_steps: Annotated[int, Option(help="Number of optimization steps to benchmark")] = 100,
-    weight_decay: Annotated[float, Option(help="Weight decay")] = 0.0,
+    weight_decay: Annotated[float, Option(help="Weight decay")] = 1e-2,
     foreach: Annotated[bool, Option(help="Use foreach implementation")] = False,
     fused: Annotated[bool, Option(help="Use fused implementation. Only valid for PyTorch optimizers")] = False,
     triton: Annotated[bool, Option(help="Use triton implementation. Only valid for optimi optimizers")] = False,
     compiled: Annotated[bool, Option(help="Use torch compile implementation. Only valid for PyTorch optimizers")] = False,
     gradient_release: Annotated[bool, Option(help="Use gradient release. Only valid for optimi optimizers")] = False,
-    exclude_bias_norm: Annotated[bool, Option(help="Exclude bias and normalization layers from weight decay")] = False,
+    exclude_bias_norm: Annotated[bool, Option(help="Exclude bias and normalization layers from weight decay")] = True,
     kahan_sum: Annotated[bool | None, Option(help="Use Kahan summation. Defaults to true for optimi optimizers in low precision")] = None,
     device: Annotated[str | None, Option(help="Device to use. Defaults to 'cuda' or 'xpu' if available.")] = None,
     warmup_steps: Annotated[int, Option(help="Don't measure time for the first N steps. Must be greater than 0.")] = 10,
@@ -431,9 +448,9 @@ def individual_optimizer(
 
 @app.command(help="Benchmark multiple models and optimizers across foreach, fused, compiled, and triton backends.")
 def benchmark_optimizers(
-    models: Annotated[list[str], Option(help="Causal or masked language models from Hugging Face transformers")] = ["Qwen/Qwen3-0.6B", "meta-llama/Llama-3.2-1B"],
+    models: Annotated[list[str], Option(help="Causal or masked language models from Hugging Face transformers")] = ["answerdotai/ModernBERT-base", "Qwen/Qwen3-0.6B", "allenai/OLMo-2-0425-1B"],
     optimizers: Annotated[list[Optimizer], Option(help="Optimizers to benchmark")] = [Optimizer.torch_adamw, Optimizer.adamw],
-    precision: Annotated[Precision, Option(help="Precision to benchmark. Use fp32 to bench mixed precision, bf16 for low precision")] = Precision.bf16,
+    precision: Annotated[Precision, Option(help="Precision to benchmark. Use fp32 to bench mixed precision, bf16 for low precision")] = Precision.fp32,
     num_steps: Annotated[int, Option(help="Number of optimization steps")] = 100,
     weight_decay: Annotated[float, Option(help="Weight decay")] = 1e-2,
     gradient_release: Annotated[bool, Option(help="Use gradient release. Only valid for optimi optimizers")] = False,
@@ -508,24 +525,24 @@ def benchmark_optimizers(
                         verbose=verbose,
                         trust_remote_code=trust_remote_code,
                     )
+                    if results is not None:
+                        entry = {
+                            "model_name": model_name,
+                            "optimizer": optimizer_choice.value,
+                            **flags,
+                            "precision": precision.value,
+                        }
+                        entry.update(results)
 
-                    entry = {
-                        "model_name": model_name,
-                        "optimizer": optimizer_choice.value,
-                        **flags,
-                        "precision": precision.value,
-                    }
-                    entry.update(results)
-
-                    if results_file.exists():
-                        try:
-                            entries = json.loads(results_file.read_text())
-                        except json.JSONDecodeError:
+                        if results_file.exists():
+                            try:
+                                entries = json.loads(results_file.read_text())
+                            except json.JSONDecodeError:
+                                entries = []
+                        else:
                             entries = []
-                    else:
-                        entries = []
-                    entries.append(entry)
-                    results_file.write_text(json.dumps(entries, indent=4))
+                        entries.append(entry)
+                        results_file.write_text(json.dumps(entries, indent=4))
 
                     torch.cuda.empty_cache()
                     gc.collect()
