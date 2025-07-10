@@ -136,6 +136,28 @@ class Precision(str, Enum):
     fp32 = "fp32"
 
 
+def get_progress(detailed: bool = False) -> Progress:
+    columns = [
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        TextColumn("[progress.remaining]Steps: {task.completed}/{task.total}"),
+        BarColumn(),
+        TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
+        RateColumn(label="steps/sec"),
+        TimeElapsedColumn(),
+        TimeRemainingColumn(),
+    ]
+    if detailed:
+        return Progress(*columns, console=console)
+    else:
+        cols = columns[:-3] + [columns[-2]]
+        return Progress(*cols, console=console)
+
+
+def can_compile(optimizer_class: torch.optim.Optimizer | OptimiOptimizer) -> bool:
+    return issubclass(optimizer_class, torch.optim.Optimizer) and not issubclass(optimizer_class, OptimiOptimizer)
+
+
 def load_model(
     model_name: str,
     trust_remote_code: bool = False,
@@ -160,28 +182,6 @@ def load_model(
     except Exception as e:
         console.print(f"[red]Error creating model {model_name}: {e}[/red]")
         raise typer.Exit(code=1)
-
-
-def get_progress(detailed: bool = False) -> Progress:
-    columns = [
-        SpinnerColumn(),
-        TextColumn("[progress.description]{task.description}"),
-        TextColumn("[progress.remaining]Steps: {task.completed}/{task.total}"),
-        BarColumn(),
-        TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
-        RateColumn(label="steps/sec"),
-        TimeElapsedColumn(),
-        TimeRemainingColumn(),
-    ]
-    if detailed:
-        return Progress(*columns, console=console)
-    else:
-        cols = columns[:-3] + [columns[-2]]
-        return Progress(*cols, console=console)
-
-
-def can_compile(optimizer_class: torch.optim.Optimizer | OptimiOptimizer) -> bool:
-    return issubclass(optimizer_class, torch.optim.Optimizer) and not issubclass(optimizer_class, OptimiOptimizer)
 
 
 def setup(
@@ -212,7 +212,8 @@ def setup(
         "gradient_release": gradient_release,
         "kahan_sum": kahan_sum,
     }
-    # disable fused/foreach for torch.optim builtins (exclude OptimiOptimizer)
+
+    # disable fused/foreach for torch.optim when compiling torch optimizers
     if compiled and can_compile(optimizer_class):
         optimizer_params["fused"] = None
         optimizer_params["foreach"] = None
@@ -220,8 +221,6 @@ def setup(
         raise ValueError(f"Only PyTorch optimizers can be compiled with torch.compile. Selected optimizer: {optimizer.value}")
 
     optimizer_params = {k: v for k, v in optimizer_params.items() if k in optimizer.init_params}
-
-    console.print(f"{optimizer_params}")
 
     if exclude_bias_norm and weight_decay > 0:
         optimizer = optimizer_class(param_groups_weight_decay(model, weight_decay=weight_decay), lr=1e-5, **optimizer_params)
@@ -319,8 +318,8 @@ def run_benchmark(
     device = torch.device(device)
     model.to(device, dtype=dtype)
     model.train()
-    optimizer_times = []
 
+    optimizer_times = []
     total_steps = num_steps + warmup_steps
 
     use_progress = progress is not None
@@ -328,13 +327,12 @@ def run_benchmark(
         task = progress.add_task("[cyan]Benchmarking", total=total_steps)
 
     for step in range(total_steps):
-        # exclude the first batch from timing
         if step == 0:
             empty_cache()
             reset_peak_memory_stats(device)
 
         # Generate random gradients for all parameters with requires_grad=True
-        # This simulates the backward pass without actually computing forward/backward
+        # This simulates the backward pass without computing forward/backward
         for param in model.parameters():
             if param.requires_grad:
                 if param.grad is None:
@@ -342,7 +340,7 @@ def run_benchmark(
                 else:
                     param.grad.data = torch.randn_like(param, device=device, dtype=dtype)
 
-        # skip the first steps so we don't measure warmup and compile time
+        # skip the warmup_steps so we don't measure warmup and compile time
         if step > warmup_steps:
             synchronize()
             start_time = time.perf_counter()
@@ -356,6 +354,7 @@ def run_benchmark(
             synchronize()
             optimizer_times.append(time.perf_counter() - start_time)
 
+        # both optimizers use the same zero_grad method, so we don't time it
         optimizer.zero_grad()
 
         if use_progress:
@@ -463,6 +462,7 @@ def benchmark_optimizers(
         for model_name in models:
             progress_models.update(model_task, description=f"[cyan]Model: {model_name}")
             progress_optimizers.update(optimizer_task, total=len(optimizers), completed=0, description="Optimizers")
+
             for optimizer_choice in optimizers:
                 supported_compile = can_compile(optimizer_choice.optimizer_class)
                 supported = optimizer_choice.init_params
@@ -474,8 +474,10 @@ def benchmark_optimizers(
                 }
                 keys = list(domains.keys())
                 combos = [dict(zip(keys, vals)) for vals in product(*domains.values()) if sum(vals) <= 1]
+
                 progress_optimizers.update(optimizer_task, description=f"[cyan]Optimizer: {optimizer_choice.value}")
                 progress_backends.update(backend_task, total=len(combos), completed=0, description="[cyan]Backends")
+
                 for flags in combos:
                     # display backend name
                     suffix = " compiled" if flags["compiled"] else ""
@@ -506,7 +508,7 @@ def benchmark_optimizers(
                         verbose=verbose,
                         trust_remote_code=trust_remote_code,
                     )
-                    # save result
+
                     entry = {
                         "model_name": model_name,
                         "optimizer": optimizer_choice.value,
@@ -514,25 +516,97 @@ def benchmark_optimizers(
                         "precision": precision.value,
                     }
                     entry.update(results)
+
                     if results_file.exists():
                         try:
-                            existing = json.loads(results_file.read_text())
+                            entries = json.loads(results_file.read_text())
                         except json.JSONDecodeError:
-                            existing = []
+                            entries = []
                     else:
-                        existing = []
-                    existing.append(entry)
-                    results_file.write_text(json.dumps(existing, indent=4))
+                        entries = []
+                    entries.append(entry)
+                    results_file.write_text(json.dumps(entries, indent=4))
+
                     torch.cuda.empty_cache()
                     gc.collect()
+
                     progress_backends.update(backend_task, advance=1)
                     if verbose and sleep > 0:
                         console.print(f"[blue]Sleeping for {sleep} seconds before next benchmark")
                         time.sleep(sleep)
-                # advance optimizer bar
+
                 progress_optimizers.update(optimizer_task, advance=1)
-            # advance model bar
             progress_models.update(model_task, advance=1)
+
+
+@app.command(help="Estimate memory required for a model and optimizer")
+def estimate_memory(
+    model: Annotated[str, Option(help="Causal or masked language model from Hugging Face transformers")] = "Qwen/Qwen3-0.6B",
+    optimizer: Annotated[Optimizer, Option(help="Optimizer to estimate memory for")] = Optimizer.adamw,
+    precision: Annotated[Precision, Option(help="Precision to estimate (fp32 or bf16)")] = Precision.fp32,
+    kahan_sum: Annotated[bool | None, Option(help="Use Kahan summation. Defaults to true for optimi optimizers in low precision")] = None,
+    trust_remote_code: Annotated[bool, Option(help="Trust remote model code")] = False,
+):
+    """Estimate memory required for a model and optimizer."""
+    from rich import print
+
+    # Set dtype based on precision
+    if precision == Precision.bf16:
+        dtype = torch.bfloat16
+    else:
+        dtype = torch.float32
+    bytes_per_param = torch.tensor([], dtype=dtype).element_size()
+
+    # Load model on CPU to avoid OOM
+    model_name = model
+    model = load_model(model, trust_remote_code=trust_remote_code, device="meta", dtype=dtype)
+    total_params = sum(p.numel() for p in model.parameters())
+    weights_mem = total_params * bytes_per_param
+
+    # Determine optimizer buffer count
+    # Dynamically determine buffer count using a dummy parameter to trigger actual state slots
+    dummy = torch.nn.Parameter(torch.zeros(64, dtype=dtype, device="cpu", requires_grad=True))
+    opt_cls = optimizer.optimizer_class
+    init_params = inspect.signature(opt_cls.__init__).parameters
+    opt_kwargs: dict = {}
+    if "kahan_sum" in init_params:
+        opt_kwargs["kahan_sum"] = kahan_sum
+    opt = opt_cls([dummy], lr=0.0, **opt_kwargs)
+    dummy.grad = torch.zeros_like(dummy)
+    with torch.no_grad():
+        opt.step()
+    state = opt.state_dict().get("state", {})
+    # buffer_count: count tensors that match dummy's shape
+    buffer_count = max(
+        (sum(1 for buf in slot.values() if isinstance(buf, torch.Tensor) and buf.shape == dummy.shape) for slot in state.values()),
+        default=1,
+    )
+
+    optimizer_mem = total_params * bytes_per_param * buffer_count
+    total_mem = weights_mem + optimizer_mem + weights_mem
+
+    def format_mem(nbytes):
+        for unit in ["B", "KB", "MB", "GB"]:
+            if nbytes < 1024:
+                return f"{nbytes:.2f} {unit}"
+            nbytes /= 1024
+        return f"{nbytes:.2f} TB"
+
+    print(
+        "\nEstimated memory required for loading the model and optimizer plus scratch for calculating the optimizer step."
+        "\nExcludes activation memory, distributed buffers, and forward/backward scratch.\n"
+    )
+    print(f"Model: {model_name}")
+    print(f"Precision: {precision} ({bytes_per_param} bytes per param)")
+    print(f"Optimizer: {optimizer.value} ({buffer_count} buffer{'s' if buffer_count > 1 else ''} per param)")
+    print(f"Parameters: {total_params:,}")
+    print("Memory:")
+    print(f"  Weights: {format_mem(weights_mem)}")
+    print(f"  Gradients: {format_mem(weights_mem)}")
+    print(f"  Optimizer State: {format_mem(optimizer_mem)}")
+    print(f"  Total: {format_mem(total_mem)}")
+    print(f"Estimated allocated memory: {format_mem(total_mem * 1.075)} - {format_mem(total_mem * 1.3)}\n")
+    return total_mem
 
 
 if __name__ == "__main__":
