@@ -170,9 +170,9 @@ def load_model(
             # Create model directly on target device for fast initialization
             with torch.device(device):
                 if any("forcausal" in arch.lower() for arch in config.architectures):
-                    model = AutoModelForCausalLM.from_pretrained(model_name, trust_remote_code=trust_remote_code, torch_dtype=dtype)
+                    model = AutoModelForCausalLM.from_config(config, trust_remote_code=trust_remote_code, torch_dtype=dtype)
                 elif any("formasked" in arch.lower() for arch in config.architectures):
-                    model = AutoModelForMaskedLM.from_pretrained(model_name, trust_remote_code=trust_remote_code, torch_dtype=dtype)
+                    model = AutoModelForMaskedLM.from_config(config, trust_remote_code=trust_remote_code, torch_dtype=dtype)
                 else:
                     raise ValueError(f"Model {model_name} has unsupported architecture: {config.architectures}")
 
