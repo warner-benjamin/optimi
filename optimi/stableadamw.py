@@ -22,7 +22,14 @@ from torch import Tensor
 from torch.utils._foreach_utils import _group_tensors_by_device_and_dtype
 
 from optimi.optimizer import OptimiOptimizer
-from optimi.utils import HAS_TRITON, _default_to_triton_or_foreach, _device_guard, _get_triton_block_size, debias_beta
+from optimi.utils import (
+    HAS_TRITON,
+    TORCH_TO_TRITON_DTYPE,
+    _default_to_triton_or_foreach,
+    _device_guard,
+    _get_triton_block_size,
+    debias_beta,
+)
 
 __all__ = ["StableAdamW", "stableadamw"]
 
@@ -34,7 +41,7 @@ def _restore_triton_scratch_state(optim: OptimiOptimizer):
         if group["triton"]:
             for p in group["params"]:
                 state = optim.state[p]
-                state["partial_sums"] = state["partial_sums"].to(dtype=torch.float32, device=p.device)
+                state["mean_square"] = state["mean_square"].to(dtype=torch.float32, device=p.device)
 
 
 class StableAdamW(OptimiOptimizer):
@@ -117,12 +124,7 @@ class StableAdamW(OptimiOptimizer):
                 state["kahan_comp"] = None
 
             if group["triton"]:
-                n_elements = param.numel()
-                partial_size = triton.cdiv(n_elements, _get_triton_block_size(n_elements))
-                state["partial_sums"] = torch.zeros(partial_size, dtype=torch.float32, device=param.device)
-                # state["rms"] = torch.zeros(1, dtype=torch.float32, device=param.device)
-                # state["rms_sum"] = torch.zeros(1, dtype=torch.float32, device=param.device)
-                # state["counter"] = torch.zeros(1, dtype=torch.int32, device=param.device)
+                state["mean_square"] = torch.zeros(1, dtype=torch.float32, device=param.device)
 
             if group["gradient_release"]:
                 state["step"] = torch.tensor(0, dtype=torch.int32)
@@ -136,7 +138,7 @@ class StableAdamW(OptimiOptimizer):
         exp_avg_sqs: list[Tensor],
         eps_sqs: list[Tensor],
         kahan_comps: list[Tensor],
-        partial_sums: list[Tensor],
+        mean_squares: list[Tensor],
     ):
         if not group["setup"]:
             group["setup"] = True
@@ -161,10 +163,7 @@ class StableAdamW(OptimiOptimizer):
             kahan_comps.append(state["kahan_comp"])
 
             if group["triton"]:
-                partial_sums.append(state["partial_sums"])
-                # rms.append(state["rms"])
-                # rms_sum.append(state["rms_sum"])
-                # counter.append(state["counter"])
+                mean_squares.append(state["mean_square"])
 
     @torch.no_grad()
     def step(self, closure: Callable | None = None, param: Tensor | None = None):
@@ -184,7 +183,7 @@ class StableAdamW(OptimiOptimizer):
 
         if param is None:
             for group in self.param_groups:
-                params, grads, exp_avgs, exp_avg_sqs, eps_sqs, kahan_comps, partial_sums = [], [], [], [], [], [], []
+                params, grads, exp_avgs, exp_avg_sqs, eps_sqs, kahan_comps, mean_squares = [], [], [], [], [], [], []
                 self._init_group(
                     group=group,
                     params=params,
@@ -193,7 +192,7 @@ class StableAdamW(OptimiOptimizer):
                     exp_avg_sqs=exp_avg_sqs,
                     eps_sqs=eps_sqs,
                     kahan_comps=kahan_comps,
-                    partial_sums=partial_sums,
+                    mean_squares=mean_squares,
                 )
 
                 stableadamw(
@@ -216,7 +215,7 @@ class StableAdamW(OptimiOptimizer):
                     triton=group["triton"],
                     gradient_release=False,
                     optimizer_accumulation=False,
-                    partial_sums=partial_sums,
+                    mean_squares=mean_squares,
                 )
         else:
             state = self.state[param]
@@ -244,7 +243,7 @@ class StableAdamW(OptimiOptimizer):
                     triton=True,
                     gradient_release=True,
                     optimizer_accumulation=self._optimizer_accumulation,
-                    partial_sums=state["partial_sums"],
+                    mean_squares=state["mean_squares"],
                 )
             else:
                 stableadamw(
@@ -293,7 +292,7 @@ def stableadamw(
     triton: bool = False,
     gradient_release: bool = False,
     optimizer_accumulation: bool = False,
-    partial_sums: list[Tensor] | None = None,
+    mean_squares: list[Tensor] | None = None,
 ):
     """Functional API to apply a StableAdamW optimization step.
 
@@ -319,7 +318,7 @@ def stableadamw(
         triton: Enables Triton support for the optimizer
         gradient_release: Fuses optimizer step as part of the parameter's backward pass
         optimizer_accumulation: Accumulate gradients into state during gradient release step
-        partial_sums: RMS calculation scratch tensor for triton kernel
+        mean_squares: RMS calculation scratch tensor for triton kernel
     """
     # calculate debiased beta hat & complement terms
     step.add_(1)
@@ -365,7 +364,7 @@ def stableadamw(
         max_lr=max_lr,
         kahan_sum=kahan_sum,
         update_parameters=(not optimizer_accumulation),
-        partial_sums=partial_sums,
+        mean_squares=mean_squares,
     )
 
 
@@ -551,7 +550,7 @@ if HAS_TRITON:
         grad_ptr,
         exp_avg_ptr,
         exp_avg_sq_ptr,
-        partial_sums_ptr,
+        mean_square_ptr,
         eps,
         beta1_hat,
         beta1_comp,
@@ -560,6 +559,7 @@ if HAS_TRITON:
         n_elements,
         update_parameters: tl.constexpr,
         BLOCK_SIZE: tl.constexpr,
+        param_dtype: tl.constexpr = tl.float32,
     ):
         pid = tl.program_id(0)
         block_start = pid * BLOCK_SIZE
@@ -568,9 +568,7 @@ if HAS_TRITON:
 
         # For low precision, with or without Kahan summation, we want all
         # computation except for the parameter updates to occur in float32.
-        grad = tl.load(grad_ptr + offsets, mask=mask)
-        grad_dtype = grad.dtype
-        grad = tl.cast(grad, tl.float32)
+        grad = tl.load(grad_ptr + offsets, mask=mask).to(tl.float32)
         exp_avg = tl.load(exp_avg_ptr + offsets, mask=mask).to(tl.float32)
         exp_avg_sq = tl.load(exp_avg_sq_ptr + offsets, mask=mask).to(tl.float32)
 
@@ -579,13 +577,15 @@ if HAS_TRITON:
 
         # partial calculation of per-element stabilisation term
         if update_parameters:
-            stab = tl.where(mask, (grad * grad) / tl.maximum(exp_avg_sq, eps * eps), 0.0)
-            block_sum = tl.sum(stab) / n_elements
-            tl.store(partial_sums_ptr + pid, block_sum)
+            square = tl.where(mask, (grad * grad) / tl.maximum(exp_avg_sq, eps * eps), 0.0)
+            block_sum = tl.sum(square, axis=0, dtype=tl.float32) / n_elements
+            # in testing, this atomic_add was faster then storing the results in
+            # a temporary buffer then summing in PyTorch or another Triton kernel
+            tl.atomic_add(mean_square_ptr, block_sum)
 
-        # commit new exp_avg / exp_avg_sq
-        tl.store(exp_avg_ptr + offsets, tl.cast(exp_avg, grad_dtype), mask=mask)
-        tl.store(exp_avg_sq_ptr + offsets, tl.cast(exp_avg_sq, grad_dtype), mask=mask)
+        # Optionally downcast exp_avg and exp_avg_sq to param.dtype
+        tl.store(exp_avg_ptr + offsets, tl.cast(exp_avg, param_dtype), mask=mask)
+        tl.store(exp_avg_sq_ptr + offsets, tl.cast(exp_avg_sq, param_dtype), mask=mask)
 
     @triton.jit
     def _stableadamw_update_kernel(
@@ -593,7 +593,7 @@ if HAS_TRITON:
         exp_avg_ptr,
         exp_avg_sq_ptr,
         kahan_ptr,
-        rms_ptr,
+        mean_square_ptr,
         lr,
         weight_decay,
         eps,
@@ -602,7 +602,6 @@ if HAS_TRITON:
         kahan_sum: tl.constexpr,
         decouple_lr: tl.constexpr,
         n_elements,
-        n_blocks,
         BLOCK_SIZE: tl.constexpr,
     ):
         pid = tl.program_id(0)
@@ -618,8 +617,8 @@ if HAS_TRITON:
         exp_avg_sq = tl.load(exp_avg_sq_ptr + offsets, mask=mask).to(tl.float32)
 
         # RMS stabilized learning rate
-        rms = tl.load(rms_ptr)
-        lr = lr / tl.maximum(1.0, tl.sqrt(rms))
+        mean_square = tl.load(mean_square_ptr)
+        lr = lr / tl.maximum(1.0, tl.sqrt(mean_square))
 
         # decoupled weight decay or fully decoupled weight decay
         if do_weight_decay:
@@ -660,7 +659,7 @@ if HAS_TRITON:
         eps_sqs: list[Tensor],
         kahan_comps: list[Tensor | None],
         *,
-        partial_sums: list[Tensor],
+        mean_squares: list[Tensor],
         lr: float,
         beta1_hat: float,
         beta1_comp: float,
@@ -678,7 +677,7 @@ if HAS_TRITON:
             exp_avg = exp_avgs[i]
             exp_avg_sq = exp_avg_sqs[i]
             kahan_comp = kahan_comps[i]
-            partial_sums_ptr = partial_sums[i]
+            mean_square = mean_squares[i]
 
             n_elements = param.numel()
             block_size = _get_triton_block_size(n_elements)
@@ -691,7 +690,7 @@ if HAS_TRITON:
                     grad_ptr=grad,
                     exp_avg_ptr=exp_avg,
                     exp_avg_sq_ptr=exp_avg_sq,
-                    partial_sums_ptr=partial_sums_ptr,
+                    mean_square_ptr=mean_square,
                     eps=eps,
                     beta1_hat=beta1_hat,
                     beta1_comp=beta1_comp,
@@ -700,18 +699,15 @@ if HAS_TRITON:
                     update_parameters=True,
                     n_elements=n_elements,
                     BLOCK_SIZE=block_size,
+                    param_dtype=TORCH_TO_TRITON_DTYPE[param.dtype],
                 )
-
-                # Handle the final reduction outside of a triton kernel for now
-                # Compute the square root inside the kernel
-                rms = torch.sum(partial_sums_ptr)
 
                 _stableadamw_update_kernel[grid](
                     param_ptr=param,
                     exp_avg_ptr=exp_avg,
                     exp_avg_sq_ptr=exp_avg_sq,
                     kahan_ptr=kahan_comp,
-                    rms_ptr=rms,
+                    mean_square_ptr=mean_square,
                     lr=lr,
                     weight_decay=weight_decay,
                     eps=eps,
@@ -720,9 +716,10 @@ if HAS_TRITON:
                     kahan_sum=kahan_sum and param.dtype in [torch.float16, torch.bfloat16],
                     decouple_lr=decouple_lr,
                     n_elements=n_elements,
-                    n_blocks=grid[0],
                     BLOCK_SIZE=block_size,
                 )
+                # reset mean_square scratch for next iteration
+                mean_square.zero_()
 
     def _single_param_triton_stableadamw(
         param: Tensor,
@@ -732,7 +729,7 @@ if HAS_TRITON:
         eps_sq: Tensor,
         kahan_comp: Tensor | None,
         *,
-        partial_sums: Tensor,
+        mean_square: Tensor,
         lr: float,
         beta1_hat: float,
         beta1_comp: float,
@@ -758,28 +755,24 @@ if HAS_TRITON:
                 grad_ptr=grad,
                 exp_avg_ptr=exp_avg,
                 exp_avg_sq_ptr=exp_avg_sq,
-                partial_sums_ptr=partial_sums,
+                mean_square_ptr=mean_square,
                 eps=eps,
                 beta1_hat=beta1_hat,
                 beta1_comp=beta1_comp,
                 beta2_hat=beta2_hat,
                 beta2_comp=beta2_comp,
-                update_parameters=True,
+                update_parameters=update_parameters,
                 n_elements=n_elements,
                 BLOCK_SIZE=block_size,
             )
 
             if update_parameters:
-                # Handle the final reduction outside of a triton kernel for now
-                # Compute the square root inside the kernel
-                rms = torch.sum(partial_sums)
-
                 _stableadamw_update_kernel[grid](
                     param_ptr=param,
                     exp_avg_ptr=exp_avg,
                     exp_avg_sq_ptr=exp_avg_sq,
                     kahan_ptr=kahan_comp,
-                    rms_ptr=rms,
+                    mean_square_ptr=mean_square,
                     lr=lr,
                     weight_decay=weight_decay,
                     eps=eps,
@@ -791,3 +784,5 @@ if HAS_TRITON:
                     n_blocks=grid[0],
                     BLOCK_SIZE=block_size,
                 )
+                # reset mean_square scratch for next iteration
+                mean_square.zero_()

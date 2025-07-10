@@ -114,3 +114,23 @@ def _get_triton_block_size(n_elements: int) -> int:
         return 512
     else:
         return 1024
+
+
+TORCH_TO_TRITON_DTYPE = {}
+
+if HAS_TRITON:
+    import triton.language as tl
+    from torch._inductor.utils import triton_type_to_torch
+
+    for triton_dtype in tl.dtype.SINT_TYPES + tl.dtype.UINT_TYPES + tl.dtype.FP_TYPES:
+        try:
+            triton_type = triton_dtype.replace("fp", "float").replace("bf", "bfloat")
+            torch_type = triton_type_to_torch(triton_type)
+            TORCH_TO_TRITON_DTYPE[torch_type] = tl.dtype(triton_dtype)
+        except AttributeError:
+            try:
+                # Handle the case where triton_type_to_torch might not recognize the Triton type
+                torch_type = triton_type_to_torch(f"tl.{triton_type}")
+                TORCH_TO_TRITON_DTYPE[torch_type] = tl.dtype(triton_dtype)
+            except AttributeError:
+                pass
