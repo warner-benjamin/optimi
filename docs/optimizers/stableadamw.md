@@ -4,7 +4,7 @@ title: "StableAdamW: AdamW with Update Clipping"
 
 # StableAdamW: AdamW with Update Clipping
 
-StableAdamW is a [AdamW](https://openreview.net/forum?id=Bkg6RiCqY7)-[Adafactor](https://proceedings.mlr.press/v80/shazeer18a.html) hybrid, porting Adafactor’s update clipping into [AdamW](adamw.md#adam) as a per parameter learning rate modification. StableAdamW’s update clipping outperforms gradient clipping on downstream tasks while avoiding model training instability.
+StableAdamW is a [AdamW](https://openreview.net/forum?id=Bkg6RiCqY7)-[Adafactor](https://proceedings.mlr.press/v80/shazeer18a.html) hybrid, porting Adafactor’s update clipping into [AdamW](adamw.md) as a per parameter learning rate modification. StableAdamW’s update clipping outperforms gradient clipping on downstream tasks while avoiding model training instability.
 
 StableAdamW was introduced by Wortsman et al in *[Stable and low-precision training for large-scale vision-language models](https://arxiv.org/abs/2304.13013)*.
 

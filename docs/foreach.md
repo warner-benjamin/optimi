@@ -16,7 +16,7 @@ If unspecified `foreach=None`, optimi will use the foreach implementation if tra
 
 ## Example
 
-Using a foreach implementation is as simple as calling
+Using a foreach implementation is as simple as setting `foreach=True` when initializing the optimizer.
 
 ```python
 import torch
@@ -24,10 +24,9 @@ from torch import nn
 from optimi import AdamW
 
 # create model
-model = nn.Linear(20, 1, device='cuda')
+model = nn.Linear(20, 1, device="cuda")
 
 # initialize any optmi optimizer with `foreach=True`
-# models on a cuda device will default to `foreach=True`
 opt = AdamW(model.parameters(), lr=1e-3, foreach=True)
 
 # forward and backward

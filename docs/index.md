@@ -1,19 +1,27 @@
 ---
 title: "optimi"
-description: "Fast, Modern, Memory Efficient, and Low Precision PyTorch Optimizers"
+description: "Fast, Modern, and Low Precision PyTorch Optimizers"
 ---
 
 # optimī
 
-**Fast, Modern, Memory Efficient, and Low Precision PyTorch Optimizers**
+**Fast, Modern, and Low Precision PyTorch Optimizers**
 
 optimi enables accurate low precision training via Kahan summation, integrates gradient release and optimizer accumulation for additional memory efficiency, supports fully decoupled weight decay, and features fast implementations of modern optimizers.
 
 ## Low Precision Training with Kahan Summation
 
-optimi optimizers can nearly reach or match the performance of mixed precision when [training in BFloat16 by using Kahan summation](kahan_summation.md).
+optimi optimizers can match the performance of mixed precision when [training in pure BFloat16 by using Kahan summation](kahan_summation.md).
 
-Training in BFloat16 with Kahan summation can reduce non-activation training memory usage by [37.5 to 45.5 percent](kahan_summation.md/#memory-savings) when using an Adam optimizer. BFloat16 training increases single GPU [training speed by ~10 percent](kahan_summation.md/#training-speedup) at the same batch size.
+Training in pure BFloat16 with Kahan summation can reduce non-activation training memory usage up to [37 to 45 percent](kahan_summation.md/#memory-savings) when using an Adam optimizer. BFloat16 training can increase single GPU [training speed up to 10 percent](kahan_summation.md/#training-speedup) at the same batch size.
+
+## Fast Triton Implementations
+
+optimi's fused [Triton optimizers](triton.md) are faster than PyTorch's fused Cuda optimizers, and nearly as fast as compiled optimizers without any hassle.
+
+![](https://ghp-cdn.benjaminwarner.dev/optimi/adamw_speed.png)
+
+optimi's Triton backend supports modern NVIDIA (Ampere or newer), AMD, and Intel GPUs, and is enabled by default for all optimizers.
 
 ## Gradient Release: Fused Backward and Optimizer Step
 
@@ -30,10 +38,6 @@ optimi optimizers can approximate gradient accumulation with gradient release by
 In addition to supporting PyTorch-style decoupled weight decay, optimi optimizers also support [fully decoupled weight decay](fully_decoupled_weight_decay.md).
 
 Fully decoupled weight decay decouples weight decay from the learning rate, more accurately following [*Decoupled Weight Decay Regularization*](https://arxiv.org/abs/1711.05101). This can help simplify hyperparameter tuning as the optimal weight decay is no longer tied to the learning rate.
-
-## Foreach Implementations
-
-All optimi optimizers have fast [foreach implementations](foreach.md), which can significantly outperform the for-loop versions. optimi reuses the gradient buffer for temporary variables to reduce foreach memory usage.
 
 ## Install
 
