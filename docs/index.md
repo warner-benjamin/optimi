@@ -13,6 +13,8 @@ optimi enables accurate low precision training via Kahan summation, integrates g
 
 optimi optimizers can match the performance of mixed precision when [training in pure BFloat16 by using Kahan summation](kahan_summation.md).
 
+![](https://ghp-cdn.benjaminwarner.dev/optimi/kahan_pretrain.png)
+
 Training in pure BFloat16 with Kahan summation can reduce non-activation training memory usage up to [37 to 45 percent](kahan_summation.md/#memory-savings) when using an Adam optimizer. BFloat16 training can increase single GPU [training speed up to 10 percent](kahan_summation.md/#training-speedup) at the same batch size.
 
 ## Fast Triton Implementations
@@ -23,6 +25,12 @@ optimi's fused [Triton optimizers](triton.md) are faster than PyTorch's fused Cu
 
 optimi's Triton backend supports modern NVIDIA (Ampere or newer), AMD, and Intel GPUs, and is enabled by default for all optimizers.
 
+## Fully Decoupled Weight Decay
+
+In addition to supporting PyTorch-style decoupled weight decay, optimi optimizers also support [fully decoupled weight decay](fully_decoupled_weight_decay.md).
+
+Fully decoupled weight decay decouples weight decay from the learning rate, more accurately following [*Decoupled Weight Decay Regularization*](https://arxiv.org/abs/1711.05101). This can help simplify hyperparameter tuning as the optimal weight decay is no longer tied to the learning rate.
+
 ## Gradient Release: Fused Backward and Optimizer Step
 
 optimi optimizers can perform the [optimization step layer-by-layer during the backward pass](gradient_release.md), immediately freeing gradient memory.
@@ -32,12 +40,6 @@ Unlike the current PyTorch implementation, optimi’s gradient release optimizer
 ## Optimizer Accumulation: Gradient Release and Accumulation
 
 optimi optimizers can approximate gradient accumulation with gradient release by [accumulating gradients into the optimizer states](optimizer_accumulation.md).
-
-## Fully Decoupled Weight Decay
-
-In addition to supporting PyTorch-style decoupled weight decay, optimi optimizers also support [fully decoupled weight decay](fully_decoupled_weight_decay.md).
-
-Fully decoupled weight decay decouples weight decay from the learning rate, more accurately following [*Decoupled Weight Decay Regularization*](https://arxiv.org/abs/1711.05101). This can help simplify hyperparameter tuning as the optimal weight decay is no longer tied to the learning rate.
 
 ## Install
 

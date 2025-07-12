@@ -8,15 +8,23 @@ optimi enables accurate low precision training via Kahan summation, integrates g
 
 optimi optimizers can match the performance of mixed precision when [training in pure BFloat16 by using Kahan summation](https://optimi.benjaminwarner.dev/kahan_summation).
 
+![](https://ghp-cdn.benjaminwarner.dev/optimi/kahan_pretrain.svg)
+
 Training in BFloat16 with Kahan summation can reduce non-activation training memory usage by [37 to 45 percent](https://optimi.benjaminwarner.dev/kahan_summation/#memory-savings) when using an Adam optimizer. BFloat16 training can increase single GPU [training speed up to 10 percent](https://optimi.benjaminwarner.dev/kahan_summation/#training-speedup) at the same batch size.
 
 ## Fast Triton Implementations
 
 optimi's fused [Triton optimizers](https://optimi.benjaminwarner.dev/triton) are faster than PyTorch's fused Cuda optimizers, and nearly as fast as compiled optimizers without any hassle.
 
-![](https://ghp-cdn.benjaminwarner.dev/optimi/adamw_speed.png)
+![](https://ghp-cdn.benjaminwarner.dev/optimi/adamw_speed.svg)
 
 optimi's Triton backend supports modern NVIDIA (Ampere or newer), AMD, and Intel GPUs, and is enabled by default for all optimizers.
+
+## Fully Decoupled Weight Decay
+
+In addition to supporting PyTorch-style decoupled weight decay, optimi optimizers also support [fully decoupled weight decay](https://optimi.benjaminwarner.dev/fully_decoupled_weight_decay).
+
+Fully decoupled weight decay decouples weight decay from the learning rate, more accurately following [*Decoupled Weight Decay Regularization*](https://arxiv.org/abs/1711.05101). This can help simplify hyperparameter tuning as the optimal weight decay is no longer tied to the learning rate.
 
 ## Gradient Release: Fused Backward and Optimizer Step
 
@@ -27,12 +35,6 @@ Unlike the current PyTorch implementation, optimi’s gradient release optimizer
 ## Optimizer Accumulation: Gradient Release and Accumulation
 
 optimi optimizers can approximate gradient accumulation with gradient release by [accumulating gradients into the optimizer states](https://optimi.benjaminwarner.dev/optimizer_accumulation).
-
-## Fully Decoupled Weight Decay
-
-In addition to supporting PyTorch-style decoupled weight decay, optimi optimizers also support [fully decoupled weight decay](https://optimi.benjaminwarner.dev/fully_decoupled_weight_decay).
-
-Fully decoupled weight decay decouples weight decay from the learning rate, more accurately following [*Decoupled Weight Decay Regularization*](https://arxiv.org/abs/1711.05101). This can help simplify hyperparameter tuning as the optimal weight decay is no longer tied to the learning rate.
 
 ## Documentation
 

@@ -6,13 +6,15 @@ title: Low Precision Training with Kahan Summation
 
 While training models in low precision (Float16 or BFloat16) usually differs from training in full precision (Float32) or [mixed precision](https://pytorch.org/blog/what-every-user-should-know-about-mixed-precision-training-in-pytorch), optimi optimizers can match the performance of mixed precision when training in pure BFloat16 by using Kahan summation[^1].
 
+![](https://ghp-cdn.benjaminwarner.dev/optimi/kahan_pretrain.png)
+
 Training in low precision [reduces non-activation memory usage up to ~46 percent](#memory-savings) and can increase [training speed up to ~30 percent](#training-speedup) relative to mixed precision training.
 
 Using Kahan summation for accurate BFloat16 training is as simple as replacing a PyTorch optimizer with its optimi equivalent and casting the model to BFloat16 instead of using mixed precision.
 
 !!! tip "Tip: Keep a Few Layers in Float32"
 
-    When training in BFloat16, keep rotary buffers and calculations in Float32 and consider keeping embedding layers in Float32, as these layers can benefit from full precision. This results in a small memory increase and speed decrease, but can help guarantee equivalent results with mixed precision training.
+    When training in BFloat16, keep rotary buffers, rotary calculations, and token embedding layers in Float32, as these benefit from full precision. This results in a small memory increase and speed decrease, but can help guarantee equivalent results with mixed precision training.
 
 By default, optimi optimizers will automatically use Kahan summation for any layers training in low precision. Set `kahan_sum=False` to disable.
 
@@ -124,7 +126,7 @@ SGD with Kahan summation expands the single update model parameter step to three
 
 These Kahan summation steps allow optimi optimizers to nearly reach or match the performance of mixed precision when training in low precision.
 
-[^1]: Current testing on small models shows little to no degradation in model performance.
+[^1]: Plot shows a simplified modded-nanogpt 160M model, trained on 1B FineWeb-Edu tokens, with RoPE and token embedding layers in Float32 and all other layers in BFloat16.
 
 [^2]: Also known as Kahan–Babuška summation or compensated summation.
 
