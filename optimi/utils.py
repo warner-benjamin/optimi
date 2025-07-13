@@ -39,15 +39,17 @@ def debias_beta(beta: float, step: int) -> float:
 def param_groups_weight_decay(
     model: nn.Module, weight_decay: float = 1e-2, additional_layers: Iterable[str] | None = None
 ) -> list[dict[str, Any]]:
-    """Creates parameter groups, excluding bias and normalization layers from weight decay.
+    """Creates parameter groups excluding bias and normalization layers from weight decay.
 
     Parameters:
-        model: Model to optimize
-        weight_decay: Weight decay coefficient (default: 1e-2)
-        additional_layers: Additional layer names to exclude from weight decay (default: None)
+        model: PyTorch model to create parameter groups for
+        weight_decay: Weight decay coefficient applied to eligible parameters (default: 1e-2)
+        additional_layers: Iterable of layer name substrings to exclude from weight decay.
+            Any parameter whose name contains one of these substrings will be excluded from
+            weight decay.
 
     Returns:
-        List of parameter groups with and without weight decay.
+        List of two parameter group dictionaries, one with and one without weight decay.
     """
     additional_layers = set(additional_layers) if additional_layers is not None else set()
     decay = []
@@ -56,7 +58,7 @@ def param_groups_weight_decay(
         if not param.requires_grad:
             continue
 
-        if param.ndim <= 1 or name.endswith(".bias") or name in additional_layers:
+        if param.ndim <= 1 or name.endswith(".bias") or any(n in name for n in additional_layers):
             no_decay.append(param)
         else:
             decay.append(param)
