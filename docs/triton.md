@@ -4,7 +4,7 @@ title: Triton Optimizers
 
 # Triton Optimizer Implementations
 
-optimi's fused Triton optimizers are faster than PyTorch's fused Cuda optimizers, and nearly as fast as compiled optimizers without any hassle[^1].
+optimi's vertically fused Triton optimizers are faster than PyTorch's fused Cuda optimizers, and nearly as fast as PyTorch's compiled optimizers without any hassle[^1].
 
 ![](https://ghp-cdn.benjaminwarner.dev/optimi/adamw_speed.png)
 
@@ -18,7 +18,7 @@ The Triton backend is compatible with [gradient release](gradient_release.md) an
 
 ## Example
 
-Using a Triton implementation is as simple as optionally setting `triton=True` when initializing the optimizer.
+optimi will use the Triton backend by default on a supported GPU. To disable this behavior set `triton=False` when initializing the optimizer.
 
 ```python
 import torch
@@ -28,8 +28,10 @@ from optimi import AdamW
 # create model
 model = nn.Linear(20, 1, device="cuda")
 
-# initialize any optmi optimizer with `triton=True`
 # models on a supported GPU will default to `triton=True`
+opt = AdamW(model.parameters(), lr=1e-3)
+
+# or initialize any optimi optimizer with `triton=True`
 opt = AdamW(model.parameters(), lr=1e-3, triton=True)
 
 # forward and backward

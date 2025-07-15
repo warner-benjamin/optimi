@@ -16,7 +16,7 @@ If unspecified `foreach=None`, optimi will use the foreach implementation if tra
 
 ## Example
 
-Using a foreach implementation is as simple as setting `foreach=True` when initializing the optimizer.
+To use a foreach implementation set `foreach=True` when initializing the optimizer.
 
 ```python
 import torch

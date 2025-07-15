@@ -41,6 +41,19 @@ Unlike the current PyTorch implementation, optimi’s gradient release optimizer
 
 optimi optimizers can approximate gradient accumulation with gradient release by [accumulating gradients into the optimizer states](optimizer_accumulation.md).
 
+## Optimizers
+
+optimi implements the following optimizers:
+
+- [Adam](optimizers/adam.md)
+- [AdamW](optimizers/adamw.md)
+- [Adan](optimizers/adan.md)
+- [Lion](optimizers/lion.md)
+- [RAdam](optimizers/radam.md)
+- [Ranger](optimizers/ranger.md)
+- [SGD](optimizers/sgd.md)
+- [StableAdamW](optimizers/stableadamw.md)
+
 ## Install
 
 optimi is available to install from pypi.
@@ -156,7 +169,3 @@ remove_gradient_release(model)
 optimi optimizers do not support compilation, differentiation, complex numbers, or have capturable versions.
 
 optimi Adam optimizers do not support AMSGrad and SGD does not support Nesterov momentum. Optimizers which debias updates (Adam optimizers and Adan) calculate the debias term per parameter group, not per parameter.
-
-## Optimizers
-
-optimi implements the following optimizers: [Adam](optimizers/adam.md), [AdamW](optimizers/adamw.md), [Adan](optimizers/adan.md), [Lion](optimizers/lion.md), [RAdam](optimizers/radam.md), [Ranger](optimizers/ranger.md), [SGD](optimizers/sgd.md), & [StableAdamW](optimizers/stableadamw.md)
