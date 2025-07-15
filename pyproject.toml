@@ -3,41 +3,52 @@ name = "torch-optimi"
 authors = [{ name = "Benjamin Warner", email = "me@benjaminwarner.dev" }]
 description = "Fast, Modern, & Low Precision PyTorch Optimizers"
 readme = "README.md"
-requires-python = ">=3.8"
+requires-python = ">=3.10"
 license = { file = "LICENSE" }
-keywords = ["Optimizers", "PyTorch", "Deep Learning"]
+keywords = ["Optimizers", "PyTorch", "Deep Learning", "AI"]
+version = "0.3.0"
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
     "License :: OSI Approved :: MIT License",
-    "Programming Language :: Python :: 3.8",
-    "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
-    'Topic :: Scientific/Engineering :: Artificial Intelligence',
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
-dependencies = ["torch>=1.13", "packaging>=21.3"]
-dynamic = ["version"]
+dependencies = ["torch>=2.2", "packaging>=23.0"]
 
-[project.optional-dependencies]
-test = ["pytest>=8.1.1", "ruff>=0.3.2", "pytest-md>=0.2.0", "numpy>=1.23"]
+[dependency-groups]
+cpu = ["torch>=2.2"]
+cu121 = ["torch>=2.2,<2.6"]
+cu124 = ["torch>=2.4"]
+cu128 = ["torch>=2.7"]
+rocm = ["torch>=2.7", "pytorch-triton-rocm>=3.3.0"]
+xpu = ["torch>=2.7.1", "pytorch-triton-xpu>=3.3.0"]
+
+test = [
+    "pytest>=8.4.0",
+    "pytest-xdist>=3.7.0",
+    "ruff>=0.11.13",
+    "pytest-md>=0.2.0",
+    "numpy>=1.23",
+]
 docs = [
-    "mkdocs-material>=9.4.7",
-    "mkdocstrings>=0.24.1",
-    "mkdocstrings-python>=1.8.0",
-    "black>=24.2.0",
-    "mkdocs-caption>=1.0.0",
+    "mkdocs-material>=9.6.14",
+    "mkdocstrings>=0.29.1",
+    "mkdocstrings-python>=1.16.12",
+    "black>=25.1.0",
+    "mkdocs-caption>=1.3.0",
 ]
-dev = [
-    "pytest>=8.1.1",
-    "ruff>=0.3.2",
-    "mkdocs-material>=9.4.7",
-    "mkdocstrings>=0.24.1",
-    "mkdocstrings-python>=1.8.0",
-    "black>=24.2.0",
-    "mkdocs-caption>=1.0.0",
+dev = [{ include-group = "test" }, { include-group = "docs" }]
+bench = [
+    "accelerate>=1.8.1",
+    "torch>=2.7",
+    "transformers>=4.53.0",
+    "typer>=0.16",
 ]
+all = [{ include-group = "dev" }, { include-group = "bench" }]
 
 [project.urls]
 "Homepage" = "https://optimi.benjaminwarner.dev"
@@ -45,20 +56,18 @@ dev = [
 "Source" = "https://github.com/warner-benjamin/optimi"
 
 [build-system]
-requires = ["setuptools>=61.0.0", "wheel"]
-build-backend = "setuptools.build_meta"
+requires = ["uv_build>=0.7.19,<0.8.0"]
+build-backend = "uv_build"
 
-[tool.setuptools]
-packages = ["optimi"]
-
-[tool.setuptools.dynamic]
-version = { attr = "optimi.__version__" }
+[tool.uv.build-backend]
+module-name = "optimi"
+module-root = ""
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 markers = [
     "cpu",
-    "cuda",
+    "gpu",
     "adam",
     "adan",
     "lion",
@@ -74,15 +83,78 @@ extend-exclude = ["tests", "docs"]
 src = ["optimi"]
 
 [tool.ruff.format]
-exclude = ["tests", "docs"]
+exclude = ["tests/reference", "docs"]
 
 [tool.ruff.lint]
 select = ["E", "W", "F", "I", "D", "UP", "W291"]
-extend-ignore = ["D100", "D107", "D206", "D300", "E111", "E114", "E117"]
-isort.required-imports = ["from __future__ import annotations"]
+extend-ignore = ["D100", "D105", "D107", "D206", "D300", "E111", "E114", "E117"]
 pycodestyle.max-doc-length = 100
 pydocstyle.convention = "google"
 
 [tool.ruff.lint.extend-per-file-ignores]
 "__init__.py" = ["D104", "F401", "I002"]
 "utils.py" = ["I002"]
+
+[tool.uv]
+conflicts = [
+  [
+    { group = "cpu" },
+    { group = "cu121" },
+    { group = "cu124" },
+    { group = "cu128" },
+    { group = "rocm" },
+    { group = "xpu" },
+  ],
+  [
+    { group = "cu121" },
+    { group = "cu124" },
+    { group = "bench" },
+    { group = "all" },
+  ],
+]
+
+[tool.uv.sources]
+torch = [
+  { index = "pytorch-cpu", group = "cpu" },
+  { index = "pytorch-cu121", group = "cu121" },
+  { index = "pytorch-cu124", group = "cu124" },
+  { index = "pytorch-cu128", group = "cu128" },
+  { index = "pytorch-rocm", group = "rocm" },
+  { index = "pytorch-xpu", group = "xpu" },
+]
+pytorch-triton-rocm = [
+  { index = "pytorch-rocm", group = "rocm" },
+]
+pytorch-triton-xpu = [
+  { index = "pytorch-xpu", group = "xpu" },
+]
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[[tool.uv.index]]
+name = "pytorch-cu121"
+url = "https://download.pytorch.org/whl/cu121"
+explicit = true
+
+[[tool.uv.index]]
+name = "pytorch-cu124"
+url = "https://download.pytorch.org/whl/cu124"
+explicit = true
+
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true
+
+[[tool.uv.index]]
+name = "pytorch-rocm"
+url = "https://download.pytorch.org/whl/rocm6.3"
+explicit = true
+
+[[tool.uv.index]]
+name = "pytorch-xpu"
+url = "https://download.pytorch.org/whl/xpu"
+explicit = true

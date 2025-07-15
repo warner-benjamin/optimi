@@ -4,15 +4,17 @@ title: Low Precision Training with Kahan Summation
 
 # Low Precision Training with Kahan Summation
 
-While training models in low precision (Float16 or BFloat16) usually differs from training in full precision (Float32) or [mixed precision](https://pytorch.org/blog/what-every-user-should-know-about-mixed-precision-training-in-pytorch), optimi optimizers nearly reach or match the performance of mixed precision when training in BFloat16 by using Kahan summation[^1].
+While training models in low precision (Float16 or BFloat16) usually differs from training in full precision (Float32) or [mixed precision](https://pytorch.org/blog/what-every-user-should-know-about-mixed-precision-training-in-pytorch), optimi optimizers can match the performance of mixed precision when training in pure BFloat16 by using Kahan summation[^1].
 
-Training in low precision [reduces non-activation memory usage up to ~46 percent](#memory-savings) and increases [training speed up to ~30 percent](#training-speedup) relative to mixed precision training.
+![](https://ghp-cdn.benjaminwarner.dev/optimi/kahan_pretrain.png)
+
+Training in low precision [reduces non-activation memory usage up to ~46 percent](#memory-savings) and can increase [training speed up to ~30 percent](#training-speedup) relative to mixed precision training.
 
 Using Kahan summation for accurate BFloat16 training is as simple as replacing a PyTorch optimizer with its optimi equivalent and casting the model to BFloat16 instead of using mixed precision.
 
 !!! tip "Tip: Keep a Few Layers in Float32"
 
-    When training in BFloat16, keep rotary embedding layers in Float32 and [consider keeping normalization layers](https://docs.mosaicml.com/projects/composer/en/latest/method_cards/low_precision_layernorm.html) in Float32, as these layers can benefit from full precision. This results in a small memory increase and speed decrease but can help guarantee equivalent results with mixed precision training.
+    When training in BFloat16, keep rotary buffers, rotary calculations, and token embedding layers in Float32, as these benefit from full precision. This results in a small memory increase and speed decrease, but can help guarantee equivalent results with mixed precision training.
 
 By default, optimi optimizers will automatically use Kahan summation for any layers training in low precision. Set `kahan_sum=False` to disable.
 
@@ -32,11 +34,11 @@ Using Kahan summation to improve low precision model training was first introduc
 
     optimi’s Kahan summation implementation was directly inspired by [TorchDistX’s](https://github.com/pytorch/torchdistx) `AnyPrecisionAdamW` optimizer.
 
-For more details, see the [algorithm](#algorithm) and [explanation](# explanation) sections.
+For more details, see the [algorithm](#algorithm) and [explanation](#explanation) sections.
 
 ## Memory Savings
 
-Training in BFloat16 with Kahan summation can reduce non-activation training memory usage by 37.5 to 46.2 percent when using an Adam optimizer, as Table 1 shows below.
+Training in pure BFloat16 with Kahan summation can reduce non-activation training memory usage up to 37 to 45 percent when using an Adam optimizer, as Table 1 shows below.
 
 Table: Adam Per Parameter Memory Usage, Excluding Activations
 
@@ -45,12 +47,11 @@ Table: Adam Per Parameter Memory Usage, Excluding Activations
 | BF16 Model Weights (if used) | 2 bytes | 2 bytes | 2 bytes |
 | FP32 Model Weights | 4 bytes  | - | - |
 | Gradients | 4 bytes | 2 bytes | 2 bytes |
-| Gradient Accumulation | 4 bytes | 2 bytes | 2 bytes |
-| Distributed Training | 4 bytes | 2 bytes | 2 bytes |
+| Distributed Buffer (optional) | 4 bytes | 2 bytes | 2 bytes |
 | Momentum  | 4 bytes | 2 bytes | 2 bytes |
 | Variance  | 4 bytes | 2 bytes | 2 bytes |
 | Kahan Compensation | - | 2 bytes | - |
-| **Total**  | 16-26 bytes | 8-14 bytes | 6-12 bytes |
+| **Total**  | 16-22 bytes | 10-12 bytes | 8-10 bytes |
 
 Calculating the total memory savings depends on [activations and batch size](https://blog.eleuther.ai/transformer-math/#activations-and-batch-size), mixed precision implementation details, and the optimizer used, to name a few variables.
 
@@ -125,8 +126,8 @@ SGD with Kahan summation expands the single update model parameter step to three
 
 These Kahan summation steps allow optimi optimizers to nearly reach or match the performance of mixed precision when training in low precision.
 
-[^1]: Current testing on small models shows little to no degradation in model performance.
+[^1]: Plot shows a simplified modded-nanogpt 160M model, trained on 1B FineWeb-Edu tokens, with RoPE and token embedding layers in Float32 and all other layers in BFloat16.
 
 [^2]: Also known as Kahan–Babuška summation or compensated summation.
 
-[^3]: BFloat16 training increases distributed training speed more then single GPU due to the halved bandwidth cost. Observed results may differ based on GPU connectivity. Maximum observed speed increase was on consumer GPUs.
+[^3]: Pure BFloat16 training can increase distributed training speed more then single GPU due to the halved bandwidth cost. Observed results may differ based on GPU connectivity and effectiveness of computation-communication overlap. Maximum observed speed increase was on consumer GPUs.

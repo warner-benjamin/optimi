@@ -14,21 +14,17 @@ jobs:
         run: |
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-      - uses: actions/setup-python@v4
-        with:
-          python-version: 3.11
-      - run: echo "cache_id=$(date --utc '+%V')" >> $GITHUB_ENV
 
-      - name: Setup Cache
-        uses: actions/cache@v4
+      - name: Install Python and uv with caching
+        uses: astral-sh/setup-uv@v6
         with:
-          key: mkdocs-material-${{ env.cache_id }}
-          path: .cache
-          restore-keys: |
-            mkdocs-material-
+          version: "0.7.13" # for reproducibility
+          python-version: 3.13
+          enable-cache: true
+          cache-dependency-glob: "pyproject.toml"
 
-      - name: Install Material for MKDocs
-        run: pip install .[docs] --extra-index-url https://download.pytorch.org/whl/cpu
+      - name: Install optimi
+        run: uv sync --group cpu
 
       - name: Deploy Docs to GitHub Pages
-        run: mkdocs gh-deploy --force
+        run: uv run mkdocs gh-deploy --force

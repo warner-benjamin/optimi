@@ -1,14 +1,35 @@
 # optimī
 
-### Fast, Modern, Memory Efficient, and Low Precision PyTorch Optimizers
+### Fast, Modern, and Low Precision PyTorch Optimizers
+
+[![Python Versions](https://img.shields.io/pypi/pyversions/torch-optimi)](https://pypi.org/project/torch-optimi/)
+[![PyPI Version](https://img.shields.io/pypi/v/torch-optimi)](https://pypi.org/project/torch-optimi/)
+[![PyPI Downloads](https://static.pepy.tech/badge/torch-optimi/month)](https://pepy.tech/projects/torch-optimi)
+[![Documentation](https://img.shields.io/badge/docs-available-brightgreen)](https://optimi.benjaminwarner.dev)
 
 optimi enables accurate low precision training via Kahan summation, integrates gradient release and optimizer accumulation for additional memory efficiency, supports fully decoupled weight decay, and features fast implementations of modern optimizers.
 
 ## Low Precision Training with Kahan Summation
 
-optimi optimizers can nearly reach or match the performance of mixed precision when [training in BFloat16 by using Kahan summation](https://optimi.benjaminwarner.dev/kahan_summation).
+optimi optimizers can match the performance of mixed precision when [training in pure BFloat16 by using Kahan summation](https://optimi.benjaminwarner.dev/kahan_summation).
 
-Training in BFloat16 with Kahan summation can reduce non-activation training memory usage by [37.5 to 45.5 percent](https://optimi.benjaminwarner.dev/kahan_summation/#memory-savings) when using an Adam optimizer. BFloat16 training increases single GPU [training speed by ~10 percent](https://optimi.benjaminwarner.dev/kahan_summation/#training-speedup) at the same batch size.
+![](https://ghp-cdn.benjaminwarner.dev/optimi/kahan_pretrain.png)
+
+Training in BFloat16 with Kahan summation can reduce non-activation training memory usage by [37 to 45 percent](https://optimi.benjaminwarner.dev/kahan_summation/#memory-savings) when using an Adam optimizer. BFloat16 training can increase single GPU [training speed up to 10 percent](https://optimi.benjaminwarner.dev/kahan_summation/#training-speedup) at the same batch size.
+
+## Fast Triton Implementations
+
+optimi's fused [Triton optimizers](https://optimi.benjaminwarner.dev/triton) are faster than PyTorch's fused Cuda optimizers, and nearly as fast as compiled optimizers without any hassle.
+
+![](https://ghp-cdn.benjaminwarner.dev/optimi/adamw_speed.png)
+
+optimi's Triton backend supports modern NVIDIA (Ampere or newer), AMD, and Intel GPUs, and is enabled by default for all optimizers.
+
+## Fully Decoupled Weight Decay
+
+In addition to supporting PyTorch-style decoupled weight decay, optimi optimizers also support [fully decoupled weight decay](https://optimi.benjaminwarner.dev/fully_decoupled_weight_decay).
+
+Fully decoupled weight decay decouples weight decay from the learning rate, more accurately following [*Decoupled Weight Decay Regularization*](https://arxiv.org/abs/1711.05101). This can help simplify hyperparameter tuning as the optimal weight decay is no longer tied to the learning rate.
 
 ## Gradient Release: Fused Backward and Optimizer Step
 
@@ -20,19 +41,21 @@ Unlike the current PyTorch implementation, optimi’s gradient release optimizer
 
 optimi optimizers can approximate gradient accumulation with gradient release by [accumulating gradients into the optimizer states](https://optimi.benjaminwarner.dev/optimizer_accumulation).
 
-## Fully Decoupled Weight Decay
-
-In addition to supporting PyTorch-style decoupled weight decay, optimi optimizers also support [fully decoupled weight decay](https://optimi.benjaminwarner.dev/fully_decoupled_weight_decay).
-
-Fully decoupled weight decay decouples weight decay from the learning rate, more accurately following [*Decoupled Weight Decay Regularization*](https://arxiv.org/abs/1711.05101). This can help simplify hyperparameter tuning as the optimal weight decay is no longer tied to the learning rate.
-
-## Foreach Implementations
-
-All optimi optimizers have fast [foreach implementations](https://optimi.benjaminwarner.dev/foreach), which can significantly outperform the for-loop versions. optimi reuses the gradient buffer for temporary variables to reduce foreach memory usage.
-
 ## Documentation
 
 <https://optimi.benjaminwarner.dev>
+
+## Optimizers
+
+optimi implements the following optimizers:
+- [Adam](https://optimi.benjaminwarner.dev/optimizers/adam)
+- [AdamW](https://optimi.benjaminwarner.dev/optimizers/adamw)
+- [Adan](https://optimi.benjaminwarner.dev/optimizers/adan)
+- [Lion](https://optimi.benjaminwarner.dev/optimizers/lion)
+- [RAdam](https://optimi.benjaminwarner.dev/optimizers/radam)
+- [Ranger](https://optimi.benjaminwarner.dev/optimizers/ranger)
+- [SGD](https://optimi.benjaminwarner.dev/optimizers/sgd)
+- [StableAdamW](https://optimi.benjaminwarner.dev/optimizers/stableadamw)
 
 ## Install
 
@@ -149,7 +172,3 @@ remove_gradient_release(model)
 optimi optimizers do not support compilation, differentiation, complex numbers, or have capturable versions.
 
 optimi Adam optimizers do not support AMSGrad and SGD does not support Nesterov momentum. Optimizers which debias updates (Adam optimizers and Adan) calculate the debias term per parameter group, not per parameter.
-
-## Optimizers
-
-optimi implements the following optimizers: [Adam](https://optimi.benjaminwarner.dev/optimizers/adam), [AdamW](https://optimi.benjaminwarner.dev/optimizers/adamw), [Adan](https://optimi.benjaminwarner.dev/optimizers/adan), [Lion](https://optimi.benjaminwarner.dev/optimizers/lion), [RAdam](https://optimi.benjaminwarner.dev/optimizers/radam), [Ranger](https://optimi.benjaminwarner.dev/optimizers/ranger), [SGD](https://optimi.benjaminwarner.dev/optimizers/sgd), & [StableAdamW](https://optimi.benjaminwarner.dev/optimizers/stableadamw)

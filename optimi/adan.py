@@ -1,4 +1,4 @@
-# Copyright (c) 2023 Benjamin Warner
+# Copyright (c) 2023-present Benjamin Warner
 # SPDX-License-Identifier: MIT
 
 # Based on PyTorch Optimizers
@@ -13,17 +13,19 @@
 # Learning rate decoupled weight decay inspired by Composer's `DecoupledSGDW` & `DecoupledAdamW`
 # Composer - Apache License 2.0 - Copyright (c) 2022 MosaicML Composer authors
 
-from __future__ import annotations
+# Triton kernels inspired by:
+# AdamW-Triton-PyTorch - MIT License - Copyright (c) 2024 Less Wright - https://github.com/lessw2020/AdamW-Triton-PyTorch
+# lion-pytorch - MIT License - Copyright (c) 2023 Phil Wang - https://github.com/lucidrains/lion-pytorch
 
-from typing import Any, Callable, Iterable
+from collections.abc import Callable, Iterable
+from typing import Any
 
 import torch
 from torch import Tensor
-from torch.optim.optimizer import _default_to_fused_or_foreach
 from torch.utils._foreach_utils import _group_tensors_by_device_and_dtype
 
 from optimi.optimizer import OptimiOptimizer
-from optimi.utils import debias_beta
+from optimi.utils import HAS_TRITON, _default_to_triton_or_foreach, _device_guard, _get_triton_block_size, debias_beta
 
 __all__ = ["Adan", "adan"]
 
@@ -49,7 +51,9 @@ class Adan(OptimiOptimizer):
             precision (float16 or bfloat16). If unspecified, automatically applies for low precision
             parameters (default: None)
         foreach: Enables the foreach implementation. If unspecified, tries to use foreach over
-            for-loop implementation since it is significantly faster (default: None)
+            for-loop implementation since it can be significantly faster (default: None)
+        triton: Enables Triton implementation. If unspecified, tries to use Triton as it is
+            significantly faster than both for-loop and foreach implementations (default: None)
         gradient_release: Fuses optimizer step and zero_grad as part of the parameter's backward
             pass. Requires model hooks created with `register_gradient_release`. Incompatible with
             closure (default: False)
@@ -67,6 +71,7 @@ class Adan(OptimiOptimizer):
         adam_wd: bool = False,
         kahan_sum: bool | None = False,
         foreach: bool | None = None,
+        triton: bool | None = None,
         gradient_release: bool = False,
     ):
         if not 0.0 <= betas[0] < 1.0:
@@ -90,6 +95,7 @@ class Adan(OptimiOptimizer):
             adam_wd=adam_wd,
             kahan_sum=kahan_sum,
             foreach=foreach,
+            triton=triton,
             gradient_release=gradient_release,
             setup=False,
         )
@@ -105,6 +111,8 @@ class Adan(OptimiOptimizer):
             if (group["kahan_sum"] or group["kahan_sum"] is None) and param.dtype in [torch.float16, torch.bfloat16]:
                 state["kahan_comp"] = torch.zeros_like(param, memory_format=torch.preserve_format)
                 group["kahan_sum"] = True
+            elif group["triton"]:
+                state["kahan_comp"] = torch.zeros(1, dtype=torch.uint8, device=param.device)
             else:
                 state["kahan_comp"] = None
 
@@ -142,8 +150,8 @@ class Adan(OptimiOptimizer):
             group["setup"] = True
             group["step"] = torch.tensor(0, dtype=torch.int32)
 
-            if group["foreach"] is None:
-                _, group["foreach"] = _default_to_fused_or_foreach(params, False, False)
+            if group["triton"] is None and group["foreach"] is None:
+                group["triton"], group["foreach"] = _default_to_triton_or_foreach(params)
 
             if group["kahan_sum"]:
                 group["adam_wd"] = False
@@ -189,6 +197,7 @@ class Adan(OptimiOptimizer):
                     max_lr=group["max_lr"],
                     kahan_sum=group["kahan_sum"],
                     foreach=group["foreach"],
+                    triton=group["triton"],
                     gradient_release=False,
                     optimizer_accumulation=False,
                 )
@@ -216,6 +225,7 @@ class Adan(OptimiOptimizer):
                 max_lr=group["max_lr"],
                 kahan_sum=group["kahan_sum"],
                 foreach=False,
+                triton=group["triton"],
                 gradient_release=True,
                 optimizer_accumulation=self._optimizer_accumulation,
             )
@@ -244,6 +254,7 @@ def adan(
     adam_wd: bool = False,
     kahan_sum: bool = False,
     foreach: bool = False,
+    triton: bool = False,
     gradient_release: bool = False,
     optimizer_accumulation: bool = False,
 ):
@@ -271,14 +282,19 @@ def adan(
         adam_wd: Apply Adam-style weight decay instead of Adan weight decay
         kahan_sum: Enables Kahan summation for low precision parameters
         foreach: Enables the faster foreach implementation
+        triton: Enables the faster Triton implementation
         gradient_release: Fuses optimizer step as part of the parameter's backward pass
         optimizer_accumulation: Accumulate gradients into state during gradient release step
     """
     # calculate debiased beta hat & complement terms
     step.add_(1)
-    beta1_comp = 1 - debias_beta(beta1, step.item())
-    beta2_comp = 1 - debias_beta(beta2, step.item())
-    beta3_hat = debias_beta(beta3, step.item())
+    step_int = step.item()
+    beta1_hat = debias_beta(beta1, step_int)
+    beta1_comp = 1 - beta1_hat
+    beta2_hat = debias_beta(beta2, step_int)
+    beta2_comp = 1 - beta2_hat
+    beta3_hat = debias_beta(beta3, step_int)
+    beta3_comp = 1 - beta3_hat
 
     # calculate decoupled weight decay or fully decoupled weight decay
     if weight_decay != 0:
@@ -295,12 +311,20 @@ def adan(
     if kahan_comps is None:
         kahan_comps = [None] * len(params)
 
-    if foreach:
-        func = _foreach_adan
-    elif gradient_release:
-        func = _single_param_adan
+    if gradient_release:
+        if triton:
+            func = _single_param_triton_adan
+        elif foreach:
+            raise ValueError(f"Gradient release {gradient_release=} and foreach {foreach=} cannot be used together")
+        else:
+            func = _single_param_adan
     else:
-        func = _single_adan
+        if triton:
+            func = _triton_adan
+        elif foreach:
+            func = _foreach_adan
+        else:
+            func = _single_adan
 
     func(
         params,
@@ -311,10 +335,13 @@ def adan(
         prev_grads,
         kahan_comps,
         lr=lr,
-        beta2=beta2,
+        beta1_hat=beta1_hat,
         beta1_comp=beta1_comp,
+        beta2=beta2,
+        beta2_hat=beta2_hat,
         beta2_comp=beta2_comp,
         beta3_hat=beta3_hat,
+        beta3_comp=beta3_comp,
         eps=eps,
         weight_decay=weight_decay,
         adam_wd=adam_wd,
@@ -333,15 +360,17 @@ def _single_adan(
     kahan_comps: list[Tensor | None],
     *,
     lr: float,
-    beta2: float,
     beta1_comp: float,
+    beta2: float,
     beta2_comp: float,
     beta3_hat: float,
+    beta3_comp: float,
     eps: float,
     weight_decay: float,
     adam_wd: bool,
     kahan_sum: bool = False,
     update_parameters: bool = True,
+    **kwargs,
 ):
     for i, param in enumerate(params):
         grad = grads[i]
@@ -364,6 +393,7 @@ def _single_adan(
             beta1_comp=beta1_comp,
             beta2_comp=beta2_comp,
             beta3_hat=beta3_hat,
+            beta3_comp=beta3_comp,
             eps=eps,
             weight_decay=weight_decay,
             adam_wd=adam_wd,
@@ -382,15 +412,17 @@ def _single_param_adan(
     kahan_comp: Tensor | None,
     *,
     lr: float,
-    beta2: float,
     beta1_comp: float,
+    beta2: float,
     beta2_comp: float,
     beta3_hat: float,
+    beta3_comp: float,
     eps: float,
     weight_decay: float,
     adam_wd: bool,
     kahan_sum: bool = False,
     update_parameters: bool = True,
+    **kwargs,
 ):
     # difference between current & previous gradients, prev_grad is negated in last step
     prev_grad.add_(grad)
@@ -403,7 +435,7 @@ def _single_param_adan(
 
     # update n_k with original & debiased betas
     prev_grad.mul_(beta2).add_(grad)
-    exp_avg_sq.mul_(beta3_hat).addcmul_(prev_grad, prev_grad, value=1 - beta3_hat)
+    exp_avg_sq.mul_(beta3_hat).addcmul_(prev_grad, prev_grad, value=beta3_comp)
 
     # set next step's prior_grad as negated current grad
     prev_grad.copy_(grad).mul_(-1)
@@ -447,10 +479,11 @@ def _foreach_adan(
     kahan_comps: list[Tensor | None],
     *,
     lr: float,
-    beta2: float,
     beta1_comp: float,
+    beta2: float,
     beta2_comp: float,
     beta3_hat: float,
+    beta3_comp: float,
     eps: float,
     weight_decay: float,
     adam_wd: bool,
@@ -476,7 +509,7 @@ def _foreach_adan(
         torch._foreach_mul_(dev_prev_grads, scalar=beta2)
         torch._foreach_add_(dev_prev_grads, dev_grads)
         torch._foreach_mul_(dev_exp_avg_sqs, scalar=beta3_hat)
-        torch._foreach_addcmul_(dev_exp_avg_sqs, dev_prev_grads, dev_prev_grads, value=1 - beta3_hat)
+        torch._foreach_addcmul_(dev_exp_avg_sqs, dev_prev_grads, dev_prev_grads, value=beta3_comp)
 
         # set next step's prior_grad as negated current grad
         torch._foreach_copy_(dev_prev_grads, dev_grads)
@@ -511,3 +544,227 @@ def _foreach_adan(
         # Adan-style weight decay
         if not adam_wd and weight_decay != 0:
             torch._foreach_div_(dev_params, scalar=weight_decay)
+
+
+if HAS_TRITON:
+    import triton
+    import triton.language as tl
+
+    @triton.jit
+    def _adan_kernel(
+        param_ptr,
+        grad_ptr,
+        exp_avg_ptr,
+        exp_avg_diff_ptr,
+        exp_avg_sq_ptr,
+        prev_grad_ptr,
+        kahan_ptr,
+        lr,
+        beta1_hat,
+        beta1_comp,
+        beta2,
+        beta2_hat,
+        beta2_comp,
+        beta3_hat,
+        beta3_comp,
+        eps,
+        weight_decay,
+        do_weight_decay: tl.constexpr,
+        adam_wd: tl.constexpr,
+        kahan_sum: tl.constexpr,
+        update_parameters: tl.constexpr,
+        n_elements,
+        BLOCK_SIZE: tl.constexpr,
+    ):
+        pid = tl.program_id(0)
+        block_start = pid * BLOCK_SIZE
+        offsets = block_start + tl.arange(0, BLOCK_SIZE)
+        mask = offsets < n_elements
+
+        # Load data
+        param = tl.load(param_ptr + offsets, mask=mask)
+        # For low precision, with or without Kahan summation, we want all
+        # computation except for the parameter updates to occur in float32.
+        grad = tl.load(grad_ptr + offsets, mask=mask).to(tl.float32)
+        exp_avg = tl.load(exp_avg_ptr + offsets, mask=mask).to(tl.float32)
+        exp_avg_diff = tl.load(exp_avg_diff_ptr + offsets, mask=mask).to(tl.float32)
+        exp_avg_sq = tl.load(exp_avg_sq_ptr + offsets, mask=mask).to(tl.float32)
+        prev_grad = tl.load(prev_grad_ptr + offsets, mask=mask).to(tl.float32)
+
+        # difference between current & previous gradients, prev_grad is negated in last step
+        prev_grad = prev_grad + grad
+
+        # update m_k with debiased beta
+        exp_avg = tl.fma(exp_avg, beta1_hat, beta1_comp * grad)
+
+        # update v_k with debiased beta
+        exp_avg_diff = tl.fma(exp_avg_diff, beta2_hat, beta2_comp * prev_grad)
+
+        # update n_k with original & debiased betas
+        prev_grad = tl.fma(prev_grad, beta2, grad)
+        exp_avg_sq = tl.fma(exp_avg_sq, beta3_hat, prev_grad * prev_grad * beta3_comp)
+
+        # set next step's prior_grad as negated current grad
+        prev_grad_next = -grad
+
+        if update_parameters:
+            # Adam-style weight decay
+            if do_weight_decay and adam_wd:
+                param = tl.cast(param * weight_decay, param.dtype)
+
+            # calculate η_k and Adan update
+            scale = -lr / (tl.sqrt(exp_avg_sq) + eps)
+            update = tl.fma(beta2, exp_avg_diff, exp_avg)
+
+            if kahan_sum:
+                # load kahan compensation, casting to fp32
+                kahan_comp = tl.load(kahan_ptr + offsets, mask=mask).to(tl.float32)
+
+                # Adan step
+                kahan_comp = kahan_comp + scale * update
+
+                # update weights with downcasted kahan update
+                prev_param = param
+                param = param + tl.cast(kahan_comp, param.dtype)
+
+                # save error back to kahan compensation for next iteration
+                kahan_comp = kahan_comp + prev_param.to(tl.float32) - param.to(tl.float32)
+
+                # store kahan compensation
+                tl.store(kahan_ptr + offsets, tl.cast(kahan_comp, param.dtype), mask=mask)
+            else:
+                # Adan step
+                param = tl.cast(tl.fma(scale, update, param), param.dtype)
+
+            # Adan-style weight decay
+            if do_weight_decay and (not adam_wd):
+                param = tl.cast(param / weight_decay, param.dtype)
+
+            # store updated parameter
+            tl.store(param_ptr + offsets, param, mask=mask)
+
+        # store updated state tensors (downcast to param.dtype)
+        tl.store(exp_avg_ptr + offsets, tl.cast(exp_avg, param.dtype), mask=mask)
+        tl.store(exp_avg_diff_ptr + offsets, tl.cast(exp_avg_diff, param.dtype), mask=mask)
+        tl.store(exp_avg_sq_ptr + offsets, tl.cast(exp_avg_sq, param.dtype), mask=mask)
+        tl.store(prev_grad_ptr + offsets, tl.cast(prev_grad_next, param.dtype), mask=mask)
+
+    def _triton_adan(
+        params: list[Tensor],
+        grads: list[Tensor],
+        exp_avgs: list[Tensor],
+        exp_avg_diffs: list[Tensor],
+        exp_avg_sqs: list[Tensor],
+        prev_grads: list[Tensor],
+        kahan_comps: list[Tensor | None],
+        *,
+        lr: float,
+        beta1_hat: float,
+        beta1_comp: float,
+        beta2: float,
+        beta2_hat: float,
+        beta2_comp: float,
+        beta3_hat: float,
+        beta3_comp: float,
+        weight_decay: float,
+        eps: float,
+        adam_wd: bool,
+        kahan_sum: bool,
+        update_parameters: bool = True,
+        **kwargs,
+    ) -> None:
+        """Apply a fused Adan step to a list of tensors using the Triton kernel."""
+        do_weight_decay = weight_decay != 0.0
+
+        for i, param in enumerate(params):
+            n_elements = param.numel()
+            block_size = _get_triton_block_size(n_elements)
+            grid = (triton.cdiv(n_elements, block_size),)
+
+            # Without this Triton tries to launch from device:0 and we get
+            # ValueError: Pointer argument (at 0) cannot be accessed from Triton (cpu tensor?)
+            with _device_guard(param):
+                _adan_kernel[grid](
+                    param_ptr=param,
+                    grad_ptr=grads[i],
+                    exp_avg_ptr=exp_avgs[i],
+                    exp_avg_diff_ptr=exp_avg_diffs[i],
+                    exp_avg_sq_ptr=exp_avg_sqs[i],
+                    prev_grad_ptr=prev_grads[i],
+                    kahan_ptr=kahan_comps[i],
+                    lr=lr,
+                    beta1_hat=beta1_hat,
+                    beta1_comp=beta1_comp,
+                    beta2=beta2,
+                    beta2_hat=beta2_hat,
+                    beta2_comp=beta2_comp,
+                    beta3_hat=beta3_hat,
+                    beta3_comp=beta3_comp,
+                    eps=eps,
+                    weight_decay=weight_decay,
+                    do_weight_decay=do_weight_decay,
+                    adam_wd=adam_wd,
+                    kahan_sum=kahan_sum and param.dtype in [torch.float16, torch.bfloat16],
+                    update_parameters=update_parameters,
+                    n_elements=n_elements,
+                    BLOCK_SIZE=block_size,
+                )
+
+    def _single_param_triton_adan(
+        param: Tensor,
+        grad: Tensor,
+        exp_avg: Tensor,
+        exp_avg_diff: Tensor,
+        exp_avg_sq: Tensor,
+        prev_grad: Tensor,
+        kahan_comp: Tensor | None,
+        *,
+        lr: float,
+        beta1_hat: float,
+        beta1_comp: float,
+        beta2: float,
+        beta2_hat: float,
+        beta2_comp: float,
+        beta3_hat: float,
+        beta3_comp: float,
+        weight_decay: float,
+        eps: float,
+        adam_wd: bool,
+        kahan_sum: bool,
+        update_parameters: bool,
+    ) -> None:
+        """Fused Adan step for a single parameter tensor (used with gradient release)."""
+        do_weight_decay = weight_decay != 0.0
+        n_elements = param.numel()
+        block_size = _get_triton_block_size(n_elements)
+
+        grid = (triton.cdiv(n_elements, block_size),)
+
+        # Without this Triton tries to launch from device:0 and we get
+        # ValueError: Pointer argument (at 0) cannot be accessed from Triton (cpu tensor?)
+        with _device_guard(param):
+            _adan_kernel[grid](
+                param_ptr=param,
+                grad_ptr=grad,
+                exp_avg_ptr=exp_avg,
+                exp_avg_diff_ptr=exp_avg_diff,
+                exp_avg_sq_ptr=exp_avg_sq,
+                prev_grad_ptr=prev_grad,
+                kahan_ptr=kahan_comp,
+                lr=lr,
+                beta1_hat=beta1_hat,
+                beta1_comp=beta1_comp,
+                beta2=beta2,
+                beta2_hat=beta2_hat,
+                beta2_comp=beta2_comp,
+                beta3_hat=beta3_hat,
+                beta3_comp=beta3_comp,
+                eps=eps,
+                weight_decay=weight_decay,
+                do_weight_decay=do_weight_decay,
+                adam_wd=adam_wd,
+                kahan_sum=kahan_sum and param.dtype in [torch.float16, torch.bfloat16],
+                update_parameters=update_parameters,
+                n_elements=n_elements,
+                BLOCK_SIZE=block_size,
+            )
