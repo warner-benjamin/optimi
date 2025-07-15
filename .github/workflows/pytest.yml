@@ -1,5 +1,6 @@
 name: CI
 on:
+  workflow_call:
   workflow_dispatch:
   push:
     paths: [ 'optimi/**', 'tests/**' ]
@@ -20,7 +21,7 @@ jobs:
       - name: Install Python and uv with caching
         uses: astral-sh/setup-uv@v6
         with:
-          version: "0.7.13" # for reproducibility
+          version: ">=0.7.19,<0.8.0"
           python-version: ${{ matrix.python-version }}
           enable-cache: true
           cache-dependency-glob: "pyproject.toml"
