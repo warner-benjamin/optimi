@@ -18,7 +18,7 @@ jobs:
       url: ${{ github.event_name == 'workflow_dispatch' && 'https://test.pypi.org/p/torch-optimi' || 'https://pypi.org/p/torch-optimi' }}
     permissions:
       id-token: write
-    needs: [test]
+    needs: test
 
     steps:
       - name: Checkout Code
@@ -45,3 +45,8 @@ jobs:
       - name: Publish to Test PyPI
         if: github.event_name == 'workflow_dispatch'
         run: uv publish --publish-url https://test.pypi.org/legacy/
+
+  docs:
+    needs: deploy
+    if: ${{ github.event_name == 'release' }}
+    uses: ./.github/workflows/pages.yml
