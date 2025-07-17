@@ -8,7 +8,7 @@ from typing import Any
 import torch
 from packaging.version import parse
 from torch import nn
-from torch.utils._foreach_utils import _foreach_supported_types, _get_foreach_kernels_supported_devices
+from torch.utils._foreach_utils import _foreach_supported_types
 
 try:
     import triton  # noqa: F401
