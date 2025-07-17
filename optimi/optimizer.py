@@ -30,6 +30,13 @@ class OptimiOptimizer(Optimizer):
             if defaults["gradient_release"]:
                 raise ValueError(f"gradient_release={defaults['gradient_release']} requires PyTorch 2.1 or later. Upgrade PyTorch to use.")
 
+        if defaults["foreach"]:
+            warn(
+                "Parameter `foreach` is deprecated in favor of the faster `triton` implementation and will be removed in a future release."
+                " Set `foreach=False` to silence this warning.",
+                category=DeprecationWarning,
+            )
+
         if defaults["decouple_lr"] and defaults["weight_decay"] >= 1e-3:
             warn(
                 f"You are using weight_decay={defaults['weight_decay']} which is potentially high for decouple_lr={defaults['decouple_lr']}"

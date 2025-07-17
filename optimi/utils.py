@@ -90,11 +90,10 @@ def _triton_kernels_supported_device(tensor: torch.Tensor):
 
 # modified from PyTorch's _default_to_fused_or_foreach
 # Copyright 2013-present PyTorch contributors, PyTorch BSD-style license
-def _default_to_triton_or_foreach(params: list[torch.Tensor]) -> tuple[bool, bool]:
+def _default_to_triton(params: list[torch.Tensor]) -> tuple[bool, bool]:
     if torch.jit.is_scripting():
-        return False, False
+        return False
 
-    foreach_supported_devices = _get_foreach_kernels_supported_devices()
     triton = (
         MIN_TORCH_2_6
         and HAS_TRITON
@@ -103,10 +102,7 @@ def _default_to_triton_or_foreach(params: list[torch.Tensor]) -> tuple[bool, boo
             for p in params
         )
     )
-    foreach = not triton and all(
-        p is None or (type(p) in _foreach_supported_types and p.device.type in foreach_supported_devices) for p in params
-    )
-    return triton, foreach
+    return triton
 
 
 def _get_triton_block_size(n_elements: int) -> int:

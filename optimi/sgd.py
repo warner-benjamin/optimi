@@ -26,7 +26,7 @@ from torch import Tensor
 from torch.utils._foreach_utils import _group_tensors_by_device_and_dtype
 
 from optimi.optimizer import OptimiOptimizer
-from optimi.utils import HAS_TRITON, _default_to_triton_or_foreach, _device_guard, _get_triton_block_size
+from optimi.utils import HAS_TRITON, _default_to_triton, _device_guard, _get_triton_block_size
 
 __all__ = ["SGD", "sgd"]
 
@@ -143,7 +143,7 @@ class SGD(OptimiOptimizer):
             group["setup"] = True
 
             if group["triton"] is None and group["foreach"] is None:
-                group["triton"], group["foreach"] = _default_to_triton_or_foreach(params)
+                group["triton"] = _default_to_triton(params)
 
     @torch.no_grad()
     def step(self, closure: Callable | None = None, param: Tensor | None = None):

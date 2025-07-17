@@ -25,7 +25,7 @@ from optimi.optimizer import OptimiOptimizer
 from optimi.utils import (
     HAS_TRITON,
     TORCH_TO_TRITON_DTYPE,
-    _default_to_triton_or_foreach,
+    _default_to_triton,
     _device_guard,
     _get_triton_block_size,
     debias_beta,
@@ -145,7 +145,7 @@ class StableAdamW(OptimiOptimizer):
             group["step"] = torch.tensor(0, dtype=torch.int32)
 
             if group["triton"] is None and group["foreach"] is None:
-                group["triton"], group["foreach"] = _default_to_triton_or_foreach(params)
+                group["triton"] = _default_to_triton(params)
 
         for p in group["params"]:
             if p.grad is None:
