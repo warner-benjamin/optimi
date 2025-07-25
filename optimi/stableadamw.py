@@ -107,7 +107,7 @@ class StableAdamW(OptimiOptimizer):
         )
         super().__init__(params, defaults)
 
-        self.register_load_state_dict_post_hook(_restore_triton_scratch_state, self.state_dict)
+        self.register_load_state_dict_post_hook(_restore_triton_scratch_state)
 
     def _init_state(self, group: dict[str, Any], state: dict[Tensor, Any], param: Tensor):
         if "kahan_comp" not in state:
@@ -243,7 +243,7 @@ class StableAdamW(OptimiOptimizer):
                     triton=True,
                     gradient_release=True,
                     optimizer_accumulation=self._optimizer_accumulation,
-                    mean_squares=state["mean_squares"],
+                    mean_squares=state["mean_square"],
                 )
             else:
                 stableadamw(
@@ -729,7 +729,7 @@ if HAS_TRITON:
         eps_sq: Tensor,
         kahan_comp: Tensor | None,
         *,
-        mean_square: Tensor,
+        mean_squares: Tensor,
         lr: float,
         beta1_hat: float,
         beta1_comp: float,
@@ -755,7 +755,7 @@ if HAS_TRITON:
                 grad_ptr=grad,
                 exp_avg_ptr=exp_avg,
                 exp_avg_sq_ptr=exp_avg_sq,
-                mean_square_ptr=mean_square,
+                mean_square_ptr=mean_squares,
                 eps=eps,
                 beta1_hat=beta1_hat,
                 beta1_comp=beta1_comp,
@@ -764,6 +764,7 @@ if HAS_TRITON:
                 update_parameters=update_parameters,
                 n_elements=n_elements,
                 BLOCK_SIZE=block_size,
+                param_dtype=TORCH_TO_TRITON_DTYPE[param.dtype],
             )
 
             if update_parameters:
@@ -772,7 +773,7 @@ if HAS_TRITON:
                     exp_avg_ptr=exp_avg,
                     exp_avg_sq_ptr=exp_avg_sq,
                     kahan_ptr=kahan_comp,
-                    mean_square_ptr=mean_square,
+                    mean_square_ptr=mean_squares,
                     lr=lr,
                     weight_decay=weight_decay,
                     eps=eps,
@@ -781,8 +782,7 @@ if HAS_TRITON:
                     kahan_sum=kahan_sum and param.dtype in [torch.float16, torch.bfloat16],
                     decouple_lr=decouple_lr,
                     n_elements=n_elements,
-                    n_blocks=grid[0],
                     BLOCK_SIZE=block_size,
                 )
                 # reset mean_square scratch for next iteration
-                mean_square.zero_()
+                mean_squares.zero_()
