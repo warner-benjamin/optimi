@@ -50,3 +50,5 @@ jobs:
     needs: deploy
     if: ${{ github.event_name == 'release' }}
     uses: ./.github/workflows/pages.yml
+    permissions:
+      contents: write
