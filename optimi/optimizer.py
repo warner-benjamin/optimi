@@ -46,7 +46,7 @@ class OptimiOptimizer(Optimizer):
 
         if not MIN_TORCH_2_6 and defaults.get("triton", False):
             raise ValueError(f"triton={defaults['triton']} requires PyTorch 2.6 or later. Set triton=False or upgrade PyTorch.")
-        elif not HAS_TRITON and defaults.get("triton", False):
+        if not HAS_TRITON and defaults.get("triton", False):
             raise ImportError("Triton could not be imported on this system. Set triton=False or install Triton.")
 
         super().__init__(params, defaults)

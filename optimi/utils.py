@@ -19,6 +19,7 @@ except ImportError:
 
 MIN_TORCH_2_1 = parse(torch.__version__) >= parse("2.1")
 MIN_TORCH_2_6 = parse(torch.__version__) >= parse("2.6")
+HAS_TRITON = HAS_TRITON and MIN_TORCH_2_6
 
 
 def debias(beta: float, step: int) -> float:
@@ -94,13 +95,9 @@ def _default_to_triton(params: list[torch.Tensor]) -> tuple[bool, bool]:
     if torch.jit.is_scripting():
         return False
 
-    triton = (
-        MIN_TORCH_2_6
-        and HAS_TRITON
-        and all(
-            p is None or (type(p) in _foreach_supported_types and _triton_kernels_supported_device(p) and torch.is_floating_point(p))
-            for p in params
-        )
+    triton = HAS_TRITON and all(
+        p is None or (type(p) in _foreach_supported_types and _triton_kernels_supported_device(p) and torch.is_floating_point(p))
+        for p in params
     )
     return triton
 
