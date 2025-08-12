@@ -298,7 +298,7 @@ class TestOptimizers:
                 atol=tolerance.atol,
                 rtol=tolerance.rtol,
                 max_error_count=max_error_count,
-                max_error_rate=max_error_rate,
+                max_error_rate=tolerance.max_error_rate,
                 name="fc1: ",
             )
             assert_most_approx_close(
@@ -307,7 +307,7 @@ class TestOptimizers:
                 atol=tolerance.atol,
                 rtol=tolerance.rtol,
                 max_error_count=max_error_count,
-                max_error_rate=max_error_rate,
+                max_error_rate=tolerance.max_error_rate,
                 name="fc2: ",
             )
 
@@ -332,7 +332,7 @@ class TestOptimizers:
                     atol=tolerance.atol,
                     rtol=tolerance.rtol,
                     max_error_count=max_error_count,
-                    max_error_rate=max_error_rate,
+                    max_error_rate=tolerance.max_error_rate,
                     name="fc1 after load: ",
                 )
                 assert_most_approx_close(
@@ -341,7 +341,7 @@ class TestOptimizers:
                     atol=tolerance.atol,
                     rtol=tolerance.rtol,
                     max_error_count=max_error_count,
-                    max_error_rate=max_error_rate,
+                    max_error_rate=tolerance.max_error_rate,
                     name="fc2 after load: ",
                 )
 
