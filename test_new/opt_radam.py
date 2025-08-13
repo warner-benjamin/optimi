@@ -1,7 +1,7 @@
 """RAdam optimizer test definitions."""
 
+import inspect
 from dataclasses import dataclass, field
-from typing import Any
 
 import optimi
 import torch
@@ -13,8 +13,8 @@ from .framework import BaseParams, OptimizerTest, ToleranceConfig
 class RAdamParams(BaseParams):
     """Type-safe RAdam optimizer parameters."""
 
-    betas: tuple[float, float] = (0.9, 0.999)
-    eps: float = 1e-6
+    betas: tuple[float, float] = (0.9, 0.99)
+    eps: float = 1e-8
     decoupled_weight_decay: bool = field(default=False)
 
     def __post_init__(self):
@@ -31,4 +31,5 @@ BASE_TEST = OptimizerTest(
     reference_class=torch.optim.RAdam,
     reference_params=RAdamParams(lr=1e-3, betas=(0.9, 0.99), weight_decay=0),
     custom_tolerances={torch.float32: ToleranceConfig(max_error_rate=0.001)},
+    test_decoupled_wd="decoupled_weight_decay" in inspect.signature(torch.optim.RAdam.__init__).parameters,
 )

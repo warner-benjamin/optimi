@@ -19,7 +19,7 @@ class AdamParams(BaseParams):
 BASE_TEST = OptimizerTest(
     name="adam_base",
     optimi_class=optimi.Adam,
-    optimi_params=AdamParams(lr=1e-3, betas=(0.9, 0.99), eps=1e-6, weight_decay=0),
+    optimi_params=AdamParams(lr=1e-3, betas=(0.9, 0.99), weight_decay=0),
     reference_class=torch.optim.Adam,
     test_decoupled_wd=False,
 )
