@@ -1,14 +1,13 @@
 """Pytest configuration and fixtures for the unified optimizer test framework.
 
-This module provides pytest configuration, custom mark registration, and fixtures
-for running optimizer tests across different devices, dtypes, and backends.
+This module provides pytest configuration, custom mark registration, and the
+`gpu_device` fixture used by tests.
 """
 
 import pytest
 import torch
-from packaging import version
 
-from .optimizer_tests import get_all_optimizer_names
+from .cases import optimizer_names
 
 
 def pytest_configure(config):
@@ -26,110 +25,53 @@ def pytest_configure(config):
     config.addinivalue_line("markers", "torch: mark test to run with torch backend")
     config.addinivalue_line("markers", "triton: mark test to run with triton backend")
 
-    optimizer_names = get_all_optimizer_names()
-    for optimizer_name in optimizer_names:
-        config.addinivalue_line("markers", f"{optimizer_name}: mark test for {optimizer_name} optimizer")
+    # Per-optimizer marks (e.g., -m adam, -m sgd)
+    for opt_name in optimizer_names():
+        config.addinivalue_line("markers", f"{opt_name}: mark test for {opt_name} optimizer")
 
 
-# Check for minimum PyTorch version for Triton support
-MIN_TORCH_2_6 = version.parse("2.6.0")
-CURRENT_TORCH_VERSION = version.parse(torch.__version__.split("+")[0])  # Remove any +cu118 suffix
-HAS_TRITON_SUPPORT = CURRENT_TORCH_VERSION >= MIN_TORCH_2_6
+def pytest_addoption(parser):
+    """Add command-line option to specify a single GPU"""
+    parser.addoption("--gpu-id", action="store", type=int, default=None, help="Specify a single GPU to use (e.g. --gpu-id=0)")
 
 
-@pytest.fixture(scope="session")
-def gpu_device():
-    """Provide GPU device for testing if available.
+@pytest.fixture()
+def gpu_device(worker_id, request):
+    """Map xdist workers to available GPU devices in a round-robin fashion,
+    supporting CUDA (NVIDIA/ROCm) and XPU (Intel) backends.
+    Use a single specified GPU if --gpu-id is provided"""
 
-    Returns:
-        torch.device: GPU device (cuda, xpu, or mps) if available, otherwise None.
-    """
+    # Check if specific GPU was requested
+    specific_gpu = request.config.getoption("--gpu-id")
+
+    # Determine available GPU backend and device count
     if torch.cuda.is_available():
-        return torch.device("cuda")
+        backend = "cuda"
+        device_count = torch.cuda.device_count()
     elif hasattr(torch, "xpu") and torch.xpu.is_available():
-        return torch.device("xpu")
+        backend = "xpu"
+        device_count = torch.xpu.device_count()
     elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
-        return torch.device("mps")
+        backend = "mps"
+        device_count = 0
     else:
-        return None
+        # Fallback to cuda for compatibility
+        backend = "cuda"
+        device_count = 0
 
+    if specific_gpu is not None:
+        return torch.device(f"{backend}:{specific_gpu}")
 
-@pytest.fixture(scope="session")
-def has_gpu(gpu_device):
-    """Check if GPU is available for testing.
+    if worker_id == "master":
+        return torch.device(backend)
 
-    Returns:
-        bool: True if GPU device is available, False otherwise.
-    """
-    return gpu_device is not None
+    # If no devices available, return default backend
+    if device_count == 0:
+        return torch.device(backend)
 
+    # Extract worker number from worker_id (e.g., 'gw6' -> 6)
+    worker_num = int(worker_id.replace("gw", ""))
 
-@pytest.fixture(scope="session")
-def has_triton():
-    """Check if Triton backend is available.
-
-    Returns:
-        bool: True if Triton is supported (PyTorch >= 2.6), False otherwise.
-    """
-    return HAS_TRITON_SUPPORT
-
-
-@pytest.fixture
-def tolerance_config():
-    """Provide default tolerance configuration for numerical comparisons.
-
-    Returns:
-        dict: Default tolerance settings for different dtypes.
-    """
-    from .framework import ToleranceConfig
-
-    return {
-        torch.float32: ToleranceConfig(rtol=1e-5, atol=1e-8),
-        torch.bfloat16: ToleranceConfig(rtol=1e-3, atol=1e-5),  # More relaxed for bfloat16
-    }
-
-
-@pytest.fixture
-def cpu_device():
-    """Provide CPU device for testing.
-
-    Returns:
-        torch.device: CPU device.
-    """
-    return torch.device("cpu")
-
-
-def pytest_collection_modifyitems(config, items):
-    """Modify test collection to add automatic skipping for unavailable resources."""
-
-    # Skip GPU tests if no GPU is available
-    if not torch.cuda.is_available() and not (hasattr(torch, "xpu") and torch.xpu.is_available()):
-        skip_gpu = pytest.mark.skip(reason="GPU not available")
-        for item in items:
-            if "gpu" in item.keywords:
-                item.add_marker(skip_gpu)
-
-    # Skip Triton tests if not supported
-    if not HAS_TRITON_SUPPORT:
-        skip_triton = pytest.mark.skip(reason=f"Triton requires PyTorch >= {MIN_TORCH_2_6}, got {CURRENT_TORCH_VERSION}")
-        for item in items:
-            if "triton" in item.keywords:
-                item.add_marker(skip_triton)
-
-
-def pytest_runtest_setup(item):
-    """Setup hook to perform additional test skipping based on marks."""
-
-    # Skip GPU tests on CPU-only systems
-    if "gpu" in item.keywords:
-        gpu_available = (
-            torch.cuda.is_available()
-            or (hasattr(torch, "xpu") and torch.xpu.is_available())
-            or (hasattr(torch.backends, "mps") and torch.backends.mps.is_available())
-        )
-        if not gpu_available:
-            pytest.skip("GPU not available")
-
-    # Skip Triton tests if not supported
-    if "triton" in item.keywords and not HAS_TRITON_SUPPORT:
-        pytest.skip(f"Triton requires PyTorch >= {MIN_TORCH_2_6}, got {CURRENT_TORCH_VERSION}")
+    # Map worker to GPU index using modulo to round-robin
+    gpu_idx = (worker_num - 1) % device_count
+    return torch.device(f"{backend}:{gpu_idx}")
