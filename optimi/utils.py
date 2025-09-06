@@ -1,6 +1,7 @@
 # Copyright (c) 2023-present Benjamin Warner
 # SPDX-License-Identifier: MIT
 
+import inspect
 from collections.abc import Iterable
 from contextlib import nullcontext
 from typing import Any
@@ -68,6 +69,104 @@ def param_groups_weight_decay(
         {"params": no_decay, "weight_decay": 0.0},
         {"params": decay, "weight_decay": weight_decay},
     ]
+
+
+def _normalize_buffers(
+    fp32_buffers: str | type[nn.Module] | Iterable[str] | Iterable[type[nn.Module]] | None,
+) -> tuple[set[str], tuple[type[nn.Module], ...]]:
+    if fp32_buffers is None:
+        return set(), tuple()
+    if not isinstance(fp32_buffers, Iterable):
+        fp32_buffers = (fp32_buffers,)
+
+    keywords = set()
+    types = set()
+    for buf in fp32_buffers:
+        if isinstance(buf, str):
+            keywords.add(buf.lower())
+        elif isinstance(buf, type) and issubclass(buf, nn.Module):
+            types.add(buf)
+        else:
+            raise TypeError("fp32_buffers items must be str or a nn.Module subclass type")
+    return keywords, tuple(types)
+
+
+def _normalize_modules(fp32_modules: type[nn.Module] | Iterable[type[nn.Module]] | None) -> tuple[type[nn.Module], ...]:
+    if fp32_modules is None:
+        return tuple()
+    if not isinstance(fp32_modules, Iterable):
+        fp32_modules = (fp32_modules,)
+    if not all(isinstance(t, type) and issubclass(t, nn.Module) for t in fp32_modules):
+        raise TypeError("fp32_modules must be nn.Module subclass type(s)")
+    return fp32_modules
+
+
+def to_low_precision(
+    model: nn.Module,
+    dtype: torch.dtype = torch.bfloat16,
+    device: torch.device | str | None = None,
+    fp32_modules: type[nn.Module] | Iterable[type[nn.Module]] | None = nn.Embedding,
+    fp32_buffers: str | type[nn.Module] | Iterable[str] | Iterable[type[nn.Module]] | None = ("rope", "rotary"),
+) -> nn.Module:
+    """Cast model to a low-precision dtype keeping select modules and buffers in float32.
+
+    Keeps all parameters and buffers of ``fp32_modules`` in float32 (default: ``nn.Embedding``).
+    Keeps only buffers in float32 for modules whose qualified name contains any keyword in
+    ``fp32_buffers`` or whose type is listed there (useful for RoPE-style buffers).
+    Casts everything else to ``dtype`` and optionally moves to ``device``.
+
+    Args:
+        model: Module to cast in-place.
+        dtype: Target dtype (default: ``torch.bfloat16``).
+        device: Optional target device (default: None).
+        fp32_modules: Modules to keep in float32 (default: ``nn.Embedding``).
+        fp32_buffers: Names and/or modules to keep buffers in float32 (default: ("rope", "rotary")).
+
+    Returns:
+        The input ``model`` (cast in-place).
+    """
+    kw, buf_types = _normalize_buffers(fp32_buffers)
+    mod_types = _normalize_modules(fp32_modules)
+
+    # Check if PyTorch has the optional 'recurse' parameter on Module._apply
+    if "recurse" not in inspect.signature(nn.Module._apply).parameters:
+        raise ValueError("`to_low_precision` requires PyTorch version 2.1 or newer.")
+
+    def recurse(m: nn.Module, qual: str = ""):
+        # Decide policy for this module
+        keep_params_fp32 = isinstance(m, mod_types)
+        keep_buffers_fp32 = keep_params_fp32 or any(k in qual for k in kw) or isinstance(m, buf_types)
+
+        # Snapshot local param / buffer ids so our *_apply fn can tell them apart
+        param_ids = {id(p) for _, p in m.named_parameters(recurse=False)}
+        buffer_ids = {id(b) for _, b in m.named_buffers(recurse=False)}
+
+        # Per-module param cast (buffers are returned unchanged)
+        def cast_params(t: torch.Tensor):
+            if id(t) in param_ids and t.is_floating_point():
+                cast_type = torch.float32 if keep_params_fp32 else dtype
+                return t.to(dtype=cast_type, device=device)
+            return t
+
+        # Per-module buffer cast (params are returned unchanged)
+        def cast_buffers(t: torch.Tensor):
+            if id(t) in buffer_ids and t.is_floating_point():
+                cast_type = torch.float32 if keep_buffers_fp32 else dtype
+                return t.to(dtype=cast_type, device=device)
+            return t
+
+        # Use PyTorch's own _apply machinery (handles swap/set_data/grad properly)
+        m._apply(cast_params, recurse=False)
+        m._apply(cast_buffers, recurse=False)
+
+        # Recurse with qualified names
+        for child_name, child in m.named_children():
+            child_qual = f"{qual}.{child_name}" if qual else child_name
+            recurse(child, child_qual)
+
+    recurse(model)
+
+    return model
 
 
 def _device_guard(tensor: torch.Tensor):

@@ -42,6 +42,40 @@ params = param_groups_weight_decay(
 )
 ```
 
+::: optimi.utils.to_low_precision
+
+### Examples
+
+```python
+from torch import nn
+from optimi.utils import to_low_precision
+
+model = nn.Sequential(
+    nn.Embedding(1000, 128),
+    nn.Linear(128, 128),
+)
+
+to_low_precision(model, dtype=torch.bfloat16)
+```
+
+Override which modules remain float32 (e.g., only keep `LayerNorm` in float32):
+
+```python
+to_low_precision(model, dtype=torch.bfloat16, fp32_modules=(nn.LayerNorm,))
+```
+
+Disable RoPE/rotary buffer preservation so they are also cast to low precision:
+
+```python
+to_low_precision(model, dtype=torch.bfloat16, fp32_buffers=None)
+```
+
+Cast and move to a device in one pass:
+
+```python
+to_low_precision(model, dtype=torch.bfloat16, device="cuda")
+```
+
 ::: optimi.gradientrelease.prepare_for_gradient_release
 
 For details on using `prepare_for_gradient_release`, please see the [gradient release docs](gradient_release.md).
