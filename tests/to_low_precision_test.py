@@ -43,7 +43,7 @@ class TinyLM(nn.Module):
 
 
 @pytest.mark.cpu
-@pytest.mark.skipif(not MIN_TORCH_2_1)
+@pytest.mark.skipif(not MIN_TORCH_2_1, reason="requires PyTorch 2.1+")
 def test_to_low_precision_default_preserves_embedding_and_rope_buffers():
     model = TinyLM()
     to_low_precision(model, dtype=torch.bfloat16)
@@ -63,7 +63,7 @@ def test_to_low_precision_default_preserves_embedding_and_rope_buffers():
 
 
 @pytest.mark.cpu
-@pytest.mark.skipif(not MIN_TORCH_2_1)
+@pytest.mark.skipif(not MIN_TORCH_2_1, reason="requires PyTorch 2.1+")
 def test_to_low_precision_custom_fp32_modules_only_layernorm():
     model = TinyLM()
     # Only keep LayerNorm in FP32; embeddings should be cast to low precision now
@@ -80,7 +80,7 @@ def test_to_low_precision_custom_fp32_modules_only_layernorm():
 
 
 @pytest.mark.cpu
-@pytest.mark.skipif(not MIN_TORCH_2_1)
+@pytest.mark.skipif(not MIN_TORCH_2_1, reason="requires PyTorch 2.1+")
 def test_to_low_precision_disable_rope_keywords_casts_rope_buffers():
     model = TinyLM()
     # Disable RoPE keyword preservation; buffers should be cast
@@ -94,7 +94,7 @@ def test_to_low_precision_disable_rope_keywords_casts_rope_buffers():
 
 
 @pytest.mark.cpu
-@pytest.mark.skipif(not MIN_TORCH_2_1)
+@pytest.mark.skipif(not MIN_TORCH_2_1, reason="requires PyTorch 2.1+")
 def test_to_low_precision_fp32_buffers_accepts_module_types():
     model = TinyLM()
 
