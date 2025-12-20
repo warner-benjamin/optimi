@@ -7,7 +7,7 @@ import optimi
 import torch
 from tests import reference
 
-from .cases import BaseParams, Case
+from .cases import BaseParams, Case, TestType
 
 
 @dataclass
@@ -32,7 +32,7 @@ TESTS = [
         optimi_params=SGDParams(lr=1e-3, momentum=0, dampening=False, weight_decay=0),
         reference_class=torch.optim.SGD,
         reference_params=SGDParams(lr=1e-3, momentum=0, dampening=0, weight_decay=0),
-        skip_tests=["accumulation"],
+        skip_tests=[TestType.accumulation],
     ),
     Case(
         name="sgd_momentum",
@@ -54,7 +54,7 @@ TESTS = [
         optimi_params=SGDParams(lr=1e-3, momentum=0.9, dampening=False, weight_decay=1e-2, decouple_wd=False),
         reference_class=torch.optim.SGD,
         reference_params=SGDParams(lr=1e-3, momentum=0.9, dampening=0, weight_decay=1e-2),
-        skip_tests=["accumulation"],
+        skip_tests=[TestType.accumulation],
     ),
     Case(
         name="sgd_decoupled_lr",

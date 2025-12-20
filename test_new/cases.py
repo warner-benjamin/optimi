@@ -1,13 +1,30 @@
-from __future__ import annotations
-
 import importlib
-from dataclasses import dataclass, field, replace
+import inspect
+from dataclasses import asdict, dataclass, field, replace
+from enum import Enum
 from pathlib import Path
 from typing import Any
 
 import torch
 from optimi.optimizer import OptimiOptimizer
 from torch.optim import Optimizer
+
+
+class TestType(Enum):
+    correctness = "correctness"
+    gradient_release = "gradient_release"
+    accumulation = "accumulation"
+
+
+class DeviceType(Enum):
+    cpu = "cpu"
+    gpu = "gpu"
+
+
+class Backend(Enum):
+    torch = "torch"
+    triton = "triton"
+    foreach = "foreach"
 
 
 @dataclass
@@ -30,9 +47,6 @@ class BaseParams:
         return replace(self, **overrides)
 
     def _kwargs_for(self, cls: type | None) -> dict[str, Any]:
-        import inspect
-        from dataclasses import asdict
-
         if cls is None:
             return {}
         sig = inspect.signature(cls.__init__)
@@ -62,9 +76,9 @@ class Case:
 
     # Behavior / constraints
     test_decoupled_wd: bool = True
-    skip_tests: list[str] = field(default_factory=list)
+    skip_tests: list[TestType] = field(default_factory=list)
     any_precision: bool = False
-    custom_iterations: dict[str, int] | None = None
+    custom_iterations: dict[TestType | tuple[TestType, DeviceType], int] | None = None
     custom_tolerances: dict[torch.dtype, Tolerance] | None = None
     only_dtypes: list[torch.dtype] | None = None
 
@@ -86,32 +100,40 @@ class Case:
     def variant_name(self) -> str:
         return self.name.split("_", 1)[1] if "_" in self.name else "base"
 
-    def to_optimi_kwargs(self, backend: str | None = None) -> dict[str, Any]:
+    def to_optimi_kwargs(self, backend: Backend | None = None) -> dict[str, Any]:
         # Both new BaseParams and legacy test_new.framework.BaseParams expose this
         kw = self.optimi_params.to_optimi_kwargs(self.optimi_class)
 
         # Centralize backend controls so runners don't mutate kwargs later
         if backend is not None:
-            if backend == "triton":
+            if backend == Backend.triton:
                 kw["triton"] = True
                 kw["foreach"] = False
-            elif backend == "torch":
+            elif backend == Backend.torch:
                 kw["triton"] = False
                 kw["foreach"] = False
-            elif backend == "foreach":
+            elif backend == Backend.foreach:
                 kw["triton"] = False
                 kw["foreach"] = True
             else:
                 raise ValueError(f"Unknown backend: {backend}")
         return kw
 
-    def to_reference_kwargs(self) -> dict[str, Any]:
+    def to_reference_kwargs(self, backend: Backend | None = None) -> dict[str, Any]:
         assert self.reference_params is not None
-        return self.reference_params.to_reference_kwargs(self.reference_class)
+        kwargs = self.reference_params.to_reference_kwargs(self.reference_class)
+        # Centralize fused handling for reference optimizers: when not testing
+        # Optimi's Triton backend, avoid fused codepaths on the reference side
+        # to mirror legacy parity expectations.
+        if backend is not None and backend != Backend.triton:
+            try:
+                if "fused" in inspect.signature(self.reference_class.__init__).parameters:
+                    kwargs = {**kwargs, "fused": False}
+            except (ValueError, TypeError):
+                pass
+        return kwargs
 
     def supports_l2_weight_decay(self) -> bool:
-        import inspect
-
         return "decouple_wd" in inspect.signature(self.optimi_class.__init__).parameters
 
 
@@ -135,9 +157,7 @@ def default_variants(base: Case) -> list[Case]:
     )
     out.append(base0)
 
-    import inspect
-
-    # L2 (coupled) if optimizer supports decouple_wd arg
+    # L2 weight decay if optimizer supports decouple_wd arg
     if "decouple_wd" in inspect.signature(base.optimi_class.__init__).parameters:
         out.append(
             replace(

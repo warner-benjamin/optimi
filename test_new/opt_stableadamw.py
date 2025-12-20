@@ -10,7 +10,7 @@ from .cases import BaseParams, Case
 
 @dataclass
 class StableAdamWParams(BaseParams):
-    betas: tuple[float, float] = (0.9, 0.999)
+    betas: tuple[float, float] = (0.9, 0.99)
     eps: float = 1e-8
 
 

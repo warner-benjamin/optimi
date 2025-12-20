@@ -15,7 +15,7 @@ class AdamParams(BaseParams):
 
 
 # Provide BASE so the framework generates base/l2/decoupled variants as applicable.
-# For Adam, we disable decoupled WD/LR generation to match prior behavior.
+# Disable decoupled WD/LR generation as this is tested in AdamW tests.
 BASE = Case(
     name="adam",
     optimi_class=optimi.Adam,
