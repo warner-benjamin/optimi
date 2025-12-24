@@ -1,5 +1,6 @@
 import pytest
 import torch
+from _pytest.mark.structures import ParameterSet
 from optimi.utils import MIN_TORCH_2_6
 
 from .config import Backend, DeviceType, OptTest, TestType, discover_tests
@@ -93,38 +94,75 @@ def _should_skip(test_type: TestType, opttest: OptTest, device_type: DeviceType,
     return False
 
 
-@pytest.mark.parametrize("opttest", OPTIMIZERS)
-@pytest.mark.parametrize("device_type", DEVICE_PARAMS)
-@pytest.mark.parametrize("dtype", DTYPE_PARAMS)
-@pytest.mark.parametrize("backend", BACKEND_PARAMS)
-@pytest.mark.parametrize("dims_spec", FULL_DIMS)
+def _param_value(param: ParameterSet) -> object:
+    return param.values[0]
+
+
+def _param_id(param: ParameterSet) -> str:
+    return param.id or str(param.values[0])
+
+
+def _build_params(test_type: TestType) -> list[ParameterSet]:
+    if test_type == TestType.correctness:
+        device_params = DEVICE_PARAMS
+        dtype_params = DTYPE_PARAMS
+        dims_params = FULL_DIMS
+    else:
+        device_params = [pytest.param(DeviceType.gpu, marks=pytest.mark.gpu, id=DeviceType.gpu.value)]
+        dtype_params = [pytest.param(torch.float32, marks=pytest.mark.float32, id="float32")]
+        dims_params = SUBSET_DIMS
+
+    params: list[ParameterSet] = []
+    for opt_param in OPTIMIZERS:
+        for device_param in device_params:
+            for dtype_param in dtype_params:
+                for backend_param in BACKEND_PARAMS:
+                    for dims_param in dims_params:
+                        if test_type == TestType.correctness and _param_value(dims_param)[0] != _param_value(device_param):
+                            continue
+                        if _should_skip(
+                            test_type,
+                            _param_value(opt_param),
+                            _param_value(device_param),
+                            _param_value(dtype_param),
+                            _param_value(backend_param),
+                        ):
+                            continue
+                        param_id = "-".join(
+                            [
+                                _param_id(dims_param),
+                                _param_id(backend_param),
+                                _param_id(dtype_param),
+                                _param_id(device_param),
+                                _param_id(opt_param),
+                            ]
+                        )
+                        params.append(
+                            pytest.param(
+                                _param_value(opt_param),
+                                _param_value(device_param),
+                                _param_value(dtype_param),
+                                _param_value(backend_param),
+                                _param_value(dims_param),
+                                id=param_id,
+                                marks=list(opt_param.marks + device_param.marks + dtype_param.marks + backend_param.marks),
+                            )
+                        )
+    return params
+
+
+@pytest.mark.parametrize("opttest, device_type, dtype, backend, dims_spec", _build_params(TestType.correctness))
 def test_correctness(opttest, device_type, dtype, backend, dims_spec, gpu_device):
-    if _should_skip(TestType.correctness, opttest, device_type, dtype, backend):
-        pytest.skip()
-    dims_device, dims = dims_spec
-    if dims_device != device_type:
-        pytest.skip()
+    _, dims = dims_spec
     device = torch.device(gpu_device if device_type == DeviceType.gpu else "cpu")
     run_correctness(opttest, device, dtype, backend, dims=dims)
 
 
-@pytest.mark.parametrize("opttest", OPTIMIZERS)
-@pytest.mark.parametrize("device_type", [pytest.param(DeviceType.gpu, marks=pytest.mark.gpu, id=DeviceType.gpu.value)])
-@pytest.mark.parametrize("dtype", [pytest.param(torch.float32, marks=pytest.mark.float32, id="float32")])
-@pytest.mark.parametrize("backend", BACKEND_PARAMS)
-@pytest.mark.parametrize("dims", SUBSET_DIMS)
+@pytest.mark.parametrize("opttest, device_type, dtype, backend, dims", _build_params(TestType.gradient_release))
 def test_gradient_release(opttest, device_type, dtype, backend, dims, gpu_device):
-    if _should_skip(TestType.gradient_release, opttest, device_type, dtype, backend):
-        pytest.skip()
     run_gradient_release(opttest, torch.device(gpu_device), dtype, backend, dims=dims)
 
 
-@pytest.mark.parametrize("opttest", OPTIMIZERS)
-@pytest.mark.parametrize("device_type", [pytest.param(DeviceType.gpu, marks=pytest.mark.gpu, id=DeviceType.gpu.value)])
-@pytest.mark.parametrize("dtype", [pytest.param(torch.float32, marks=pytest.mark.float32, id="float32")])
-@pytest.mark.parametrize("backend", BACKEND_PARAMS)
-@pytest.mark.parametrize("dims", SUBSET_DIMS)
+@pytest.mark.parametrize("opttest, device_type, dtype, backend, dims", _build_params(TestType.accumulation))
 def test_accumulation(opttest, device_type, dtype, backend, dims, gpu_device):
-    if _should_skip(TestType.accumulation, opttest, device_type, dtype, backend):
-        pytest.skip()
     run_accumulation(opttest, torch.device(gpu_device), dtype, backend, dims=dims)

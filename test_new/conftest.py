@@ -22,6 +22,7 @@ def pytest_configure(config):
 
     # Register backend marks
     config.addinivalue_line("markers", "torch: mark test to run with torch backend")
+    config.addinivalue_line("markers", "foreach: mark test to run with foreach backend")
     config.addinivalue_line("markers", "triton: mark test to run with triton backend")
 
     # Per-optimizer marks (e.g., -m adam, -m sgd)
@@ -36,8 +37,8 @@ def pytest_addoption(parser):
 
 @pytest.fixture()
 def gpu_device(worker_id, request):
-    """Map xdist workers to available GPU devices in a round-robin fashion, supporting CUDA (NVIDIA/ROCm) and XPU (Intel) backends.
-
+    """Map xdist workers to available GPU devices in a round-robin fashion,
+    supporting CUDA (NVIDIA/ROCm) and XPU (Intel) backends.
     Use a single specified GPU if --gpu-id is provided"""
 
     # Check if specific GPU was requested
