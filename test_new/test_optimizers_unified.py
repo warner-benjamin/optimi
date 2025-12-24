@@ -15,6 +15,7 @@ DTYPE_PARAMS = [
 ]
 BACKEND_PARAMS = [
     pytest.param(Backend.torch, marks=pytest.mark.torch, id=Backend.torch.value),
+    pytest.param(Backend.foreach, marks=pytest.mark.foreach, id=Backend.foreach.value),
     pytest.param(Backend.triton, marks=pytest.mark.triton, id=Backend.triton.value),
 ]
 
@@ -39,13 +40,13 @@ SUBSET_DIMS = [
 ]
 
 
-def _should_skip(test_type: TestType, case: OptTest, device_type: DeviceType, dtype: torch.dtype, backend: Backend) -> bool:
-    # Explicit per-case skip
-    if test_type in set(case.skip_tests):
+def _should_skip(test_type: TestType, opttest: OptTest, device_type: DeviceType, dtype: torch.dtype, backend: Backend) -> bool:
+    # Explicit per-opttest skip
+    if test_type in set(opttest.skip_tests):
         return True
 
     # Respect per-test dtype constraints if provided
-    if case.only_dtypes and dtype not in case.only_dtypes:
+    if opttest.only_dtypes and dtype not in opttest.only_dtypes:
         return True
 
     # Skip triton on CPU
@@ -85,45 +86,45 @@ def _should_skip(test_type: TestType, case: OptTest, device_type: DeviceType, dt
     ):
         return True
 
-    # Skip bfloat16 on CPU for most optimizers; allow anyadam exception via case.any_precision
-    if device_type == DeviceType.cpu and dtype == torch.bfloat16 and not case.any_precision:
+    # Skip bfloat16 on CPU for most optimizers; allow anyadam exception via opttest.any_precision
+    if device_type == DeviceType.cpu and dtype == torch.bfloat16 and not opttest.any_precision:
         return True
 
     return False
 
 
-@pytest.mark.parametrize("case", OPTIMIZERS)
+@pytest.mark.parametrize("opttest", OPTIMIZERS)
 @pytest.mark.parametrize("device_type", DEVICE_PARAMS)
 @pytest.mark.parametrize("dtype", DTYPE_PARAMS)
 @pytest.mark.parametrize("backend", BACKEND_PARAMS)
 @pytest.mark.parametrize("dims_spec", FULL_DIMS)
-def test_correctness(case, device_type, dtype, backend, dims_spec, gpu_device):
-    if _should_skip(TestType.correctness, case, device_type, dtype, backend):
+def test_correctness(opttest, device_type, dtype, backend, dims_spec, gpu_device):
+    if _should_skip(TestType.correctness, opttest, device_type, dtype, backend):
         pytest.skip()
     dims_device, dims = dims_spec
     if dims_device != device_type:
         pytest.skip()
     device = torch.device(gpu_device if device_type == DeviceType.gpu else "cpu")
-    run_correctness(case, device, dtype, backend, dims=dims)
+    run_correctness(opttest, device, dtype, backend, dims=dims)
 
 
-@pytest.mark.parametrize("case", OPTIMIZERS)
+@pytest.mark.parametrize("opttest", OPTIMIZERS)
 @pytest.mark.parametrize("device_type", [pytest.param(DeviceType.gpu, marks=pytest.mark.gpu, id=DeviceType.gpu.value)])
 @pytest.mark.parametrize("dtype", [pytest.param(torch.float32, marks=pytest.mark.float32, id="float32")])
 @pytest.mark.parametrize("backend", BACKEND_PARAMS)
 @pytest.mark.parametrize("dims", SUBSET_DIMS)
-def test_gradient_release(case, device_type, dtype, backend, dims, gpu_device):
-    if _should_skip(TestType.gradient_release, case, device_type, dtype, backend):
+def test_gradient_release(opttest, device_type, dtype, backend, dims, gpu_device):
+    if _should_skip(TestType.gradient_release, opttest, device_type, dtype, backend):
         pytest.skip()
-    run_gradient_release(case, torch.device(gpu_device), dtype, backend, dims=dims)
+    run_gradient_release(opttest, torch.device(gpu_device), dtype, backend, dims=dims)
 
 
-@pytest.mark.parametrize("case", OPTIMIZERS)
+@pytest.mark.parametrize("opttest", OPTIMIZERS)
 @pytest.mark.parametrize("device_type", [pytest.param(DeviceType.gpu, marks=pytest.mark.gpu, id=DeviceType.gpu.value)])
 @pytest.mark.parametrize("dtype", [pytest.param(torch.float32, marks=pytest.mark.float32, id="float32")])
 @pytest.mark.parametrize("backend", BACKEND_PARAMS)
 @pytest.mark.parametrize("dims", SUBSET_DIMS)
-def test_accumulation(case, device_type, dtype, backend, dims, gpu_device):
-    if _should_skip(TestType.accumulation, case, device_type, dtype, backend):
+def test_accumulation(opttest, device_type, dtype, backend, dims, gpu_device):
+    if _should_skip(TestType.accumulation, opttest, device_type, dtype, backend):
         pytest.skip()
-    run_accumulation(case, torch.device(gpu_device), dtype, backend, dims=dims)
+    run_accumulation(opttest, torch.device(gpu_device), dtype, backend, dims=dims)

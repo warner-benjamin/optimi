@@ -15,18 +15,18 @@ def _device_type(device: torch.device) -> DeviceType:
 
 
 def _get_iterations(
-    case: OptTest,
+    opttest: OptTest,
     test_type: TestType,
     default: int,
     device: torch.device | None = None,
 ) -> int:
-    if not case.custom_iterations:
+    if not opttest.custom_iterations:
         return default
     if device is not None:
         key = (test_type, _device_type(device))
-        if key in case.custom_iterations:
-            return case.custom_iterations[key]
-    return case.custom_iterations.get(test_type, default)
+        if key in opttest.custom_iterations:
+            return opttest.custom_iterations[key]
+    return opttest.custom_iterations.get(test_type, default)
 
 
 def assert_most_approx_close(
@@ -71,7 +71,7 @@ class MLP(torch.nn.Module):
 
 
 def run_correctness(
-    case: OptTest,
+    opttest: OptTest,
     device: torch.device,
     dtype: torch.dtype,
     backend: Backend,
@@ -79,11 +79,11 @@ def run_correctness(
 ) -> None:
     # Iterations and tolerance
     default_iters = DEFAULTS.correctness.cpu_iterations if device.type == "cpu" else DEFAULTS.correctness.gpu_iterations
-    iterations = _get_iterations(case, TestType.correctness, default_iters, device=device)
-    # Special-case: Adan bf16 on GPU
-    if device.type != "cpu" and dtype == torch.bfloat16 and case.optimizer_name == "adan":
+    iterations = _get_iterations(opttest, TestType.correctness, default_iters, device=device)
+    # Special-opttest: Adan bf16 on GPU
+    if device.type != "cpu" and dtype == torch.bfloat16 and opttest.optimizer_name == "adan":
         iterations = DEFAULTS.correctness.adan_bf16_gpu_iterations
-    tolerance = case.custom_tolerances[dtype]
+    tolerance = opttest.custom_tolerances[dtype]
     # Dims, batch, errors
     if dims is not None:
         dim1, dim2 = dims
@@ -100,16 +100,16 @@ def run_correctness(
     m2.load_state_dict(m1.state_dict())
 
     # Convert parameters to float for non-any_precision
-    if not case.any_precision and dtype != torch.float32:
+    if not opttest.any_precision and dtype != torch.float32:
         for p in m1.parameters():
             p.data = p.data.float()
 
     # Optimizers
-    reference_class = case.reference_class
-    reference_kwargs = case.to_reference_kwargs(backend)
-    optimi_kwargs = case.to_optimi_kwargs(backend)
+    reference_class = opttest.reference_class
+    reference_kwargs = opttest.to_reference_kwargs(backend)
+    optimi_kwargs = opttest.to_optimi_kwargs(backend)
     reference_optimizer = reference_class(m1.parameters(), **reference_kwargs)
-    optimi_optimizer = case.optimi_class(m2.parameters(), **optimi_kwargs)
+    optimi_optimizer = opttest.optimi_class(m2.parameters(), **optimi_kwargs)
 
     buffer = io.BytesIO()
 
@@ -119,7 +119,7 @@ def run_correctness(
         target1 = torch.randn(batch_size, 1, device=device, dtype=dtype)
         target2 = target1.detach().clone()
 
-        if not case.any_precision and dtype != torch.float32:
+        if not opttest.any_precision and dtype != torch.float32:
             input1 = input1.float()
             target1 = target1.float()
 
@@ -159,7 +159,7 @@ def run_correctness(
             torch.save(optimi_optimizer.state_dict(), buffer)
             buffer.seek(0)
             ckpt = torch.load(buffer, weights_only=True)
-            optimi_optimizer = case.optimi_class(m2.parameters(), **optimi_kwargs)
+            optimi_optimizer = opttest.optimi_class(m2.parameters(), **optimi_kwargs)
             optimi_optimizer.load_state_dict(ckpt)
             buffer.seek(0)
             buffer.truncate(0)
@@ -185,7 +185,7 @@ def run_correctness(
 
 
 def run_gradient_release(
-    case: OptTest,
+    opttest: OptTest,
     device: torch.device,
     dtype: torch.dtype,
     backend: Backend,
@@ -196,10 +196,10 @@ def run_gradient_release(
         torch_optimizers[parameter].zero_grad()
 
     # Iterations
-    iterations = _get_iterations(case, TestType.gradient_release, DEFAULTS.gradient_release.iterations, device=device)
+    iterations = _get_iterations(opttest, TestType.gradient_release, DEFAULTS.gradient_release.iterations, device=device)
 
-    # Tolerances: merge baseline with per-case
-    tol = case.custom_tolerances[dtype]
+    # Tolerances: merge baseline with per-opttest
+    tol = opttest.custom_tolerances[dtype]
     baseline = DEFAULTS.gradient_release.baseline_tolerance.get(dtype, tol)
     tolerance = Tolerance(
         rtol=max(tol.rtol, baseline.rtol),
@@ -224,9 +224,9 @@ def run_gradient_release(
     m2.load_state_dict(m1.state_dict())
     m3.load_state_dict(m1.state_dict())
 
-    reference_class = case.reference_class
-    reference_kwargs = case.to_reference_kwargs(backend)
-    optimi_kwargs = case.to_optimi_kwargs(backend)
+    reference_class = opttest.reference_class
+    reference_kwargs = opttest.to_reference_kwargs(backend)
+    optimi_kwargs = opttest.to_optimi_kwargs(backend)
 
     regular_optimizer = reference_class(m1.parameters(), **reference_kwargs)
     torch_optimizers = {p: reference_class([p], **reference_kwargs) for p in m2.parameters()}
@@ -235,7 +235,7 @@ def run_gradient_release(
         pytorch_hooks.append(p.register_post_accumulate_grad_hook(optimizer_hook))
 
     optimi_kwargs["gradient_release"] = True
-    optimi_optimizer = case.optimi_class(m3.parameters(), **optimi_kwargs)
+    optimi_optimizer = opttest.optimi_class(m3.parameters(), **optimi_kwargs)
     prepare_for_gradient_release(m3, optimi_optimizer)
 
     for _ in range(iterations):
@@ -309,14 +309,14 @@ def run_gradient_release(
 
 
 def run_accumulation(
-    case: OptTest,
+    opttest: OptTest,
     device: torch.device,
     dtype: torch.dtype,
     backend: Backend,
     dims: tuple[int, int] | None = None,
 ) -> None:
     # Iterations
-    iterations = _get_iterations(case, TestType.accumulation, DEFAULTS.accumulation.iterations, device=device)
+    iterations = _get_iterations(opttest, TestType.accumulation, DEFAULTS.accumulation.iterations, device=device)
 
     # Dims and batch size
     if dims is not None:
@@ -334,13 +334,13 @@ def run_accumulation(
     m2 = MLP(dim1, dim2, device=device, dtype=dtype)  # Optimi accumulation
     m2.load_state_dict(m1.state_dict())
 
-    reference_class = case.reference_class
-    reference_kwargs = case.to_reference_kwargs(backend)
-    optimi_kwargs = case.to_optimi_kwargs(backend)
+    reference_class = opttest.reference_class
+    reference_kwargs = opttest.to_reference_kwargs(backend)
+    optimi_kwargs = opttest.to_optimi_kwargs(backend)
 
     regular_optimizer = reference_class(m1.parameters(), **reference_kwargs)
     optimi_kwargs["gradient_release"] = True
-    optimi_optimizer = case.optimi_class(m2.parameters(), **optimi_kwargs)
+    optimi_optimizer = opttest.optimi_class(m2.parameters(), **optimi_kwargs)
     prepare_for_gradient_release(m2, optimi_optimizer)
 
     gradient_accumulation_steps = DEFAULTS.accumulation.gradient_accumulation_steps
