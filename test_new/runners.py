@@ -7,8 +7,7 @@ import torch
 from optimi import prepare_for_gradient_release, remove_gradient_release
 from torch import Tensor
 
-from .cases import Backend, DeviceType, OptTest, TestType, Tolerance
-from .config import DEFAULTS
+from .config import DEFAULTS, Backend, DeviceType, OptTest, TestType, Tolerance
 
 
 def _device_type(device: torch.device) -> DeviceType:

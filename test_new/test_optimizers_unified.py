@@ -2,7 +2,7 @@ import pytest
 import torch
 from optimi.utils import MIN_TORCH_2_6
 
-from .cases import Backend, DeviceType, OptTest, TestType, discover_tests
+from .config import Backend, DeviceType, OptTest, TestType, discover_tests
 from .runners import run_accumulation, run_correctness, run_gradient_release
 
 DEVICE_PARAMS = [

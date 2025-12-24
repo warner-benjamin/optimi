@@ -5,7 +5,7 @@ from dataclasses import dataclass
 import optimi
 import torch
 
-from .cases import BaseParams, OptTest
+from .config import BaseParams, OptTest
 
 
 @dataclass
@@ -19,8 +19,8 @@ class AdamParams(BaseParams):
 BASE = OptTest(
     name="adam",
     optimi_class=optimi.Adam,
-    optimi_params=AdamParams(lr=1e-3, betas=(0.9, 0.99), eps=1e-6, weight_decay=0.0),
+    optimi_params=AdamParams(),
     reference_class=torch.optim.Adam,
-    reference_params=AdamParams(lr=1e-3, betas=(0.9, 0.99), eps=1e-6, weight_decay=0.0),
+    reference_params=AdamParams(),
     test_decoupled_wd=False,
 )

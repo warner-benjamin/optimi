@@ -7,7 +7,7 @@ import optimi
 import torch
 from tests import reference
 
-from .cases import BaseParams, OptTest, TestType
+from .config import BaseParams, OptTest, TestType
 
 
 @dataclass
@@ -29,38 +29,38 @@ TESTS = [
     OptTest(
         name="sgd_base",
         optimi_class=optimi.SGD,
-        optimi_params=SGDParams(lr=1e-3, momentum=0, dampening=False, weight_decay=0),
+        optimi_params=SGDParams(),
         reference_class=torch.optim.SGD,
-        reference_params=SGDParams(lr=1e-3, momentum=0, dampening=0, weight_decay=0),
+        reference_params=SGDParams(),
         skip_tests=[TestType.accumulation],
     ),
     OptTest(
         name="sgd_momentum",
         optimi_class=optimi.SGD,
-        optimi_params=SGDParams(lr=1e-3, momentum=0.9, dampening=False, weight_decay=0),
+        optimi_params=SGDParams(momentum=0.9),
         reference_class=torch.optim.SGD,
-        reference_params=SGDParams(lr=1e-3, momentum=0.9, dampening=0, weight_decay=0),
+        reference_params=SGDParams(momentum=0.9),
     ),
     OptTest(
         name="sgd_dampening",
         optimi_class=optimi.SGD,
-        optimi_params=SGDParams(lr=1e-3, momentum=0.9, dampening=True, weight_decay=0, torch_init=True),
+        optimi_params=SGDParams(momentum=0.9, dampening=True, torch_init=True),
         reference_class=torch.optim.SGD,
-        reference_params=SGDParams(lr=1e-3, momentum=0.9, dampening=0.9, weight_decay=0),
+        reference_params=SGDParams(momentum=0.9, dampening=0.9),
     ),
     OptTest(
         name="sgd_weight_decay",
         optimi_class=optimi.SGD,
-        optimi_params=SGDParams(lr=1e-3, momentum=0.9, dampening=False, weight_decay=1e-2, decouple_wd=False),
+        optimi_params=SGDParams(momentum=0.9, weight_decay=1e-2),
         reference_class=torch.optim.SGD,
-        reference_params=SGDParams(lr=1e-3, momentum=0.9, dampening=0, weight_decay=1e-2),
+        reference_params=SGDParams(momentum=0.9, weight_decay=1e-2),
         skip_tests=[TestType.accumulation],
     ),
     OptTest(
         name="sgd_decoupled_lr",
         optimi_class=optimi.SGD,
-        optimi_params=SGDParams(lr=1e-3, momentum=0.9, dampening=True, decouple_lr=True, weight_decay=1e-5, torch_init=True),
+        optimi_params=SGDParams(momentum=0.9, dampening=True, decouple_lr=True, weight_decay=1e-5, torch_init=True),
         reference_class=reference.DecoupledSGDW,
-        reference_params=SGDParams(lr=1e-3, momentum=0.9, dampening=0.9, weight_decay=1e-5),
+        reference_params=SGDParams(momentum=0.9, dampening=0.9, weight_decay=1e-5),
     ),
 ]

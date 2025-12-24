@@ -6,13 +6,13 @@ import optimi
 import torch
 from tests.reference import AnyPrecisionAdamW
 
-from .cases import BaseParams, OptTest, Tolerance
+from .config import BaseParams, OptTest, Tolerance
 
 
 @dataclass
 class AnyAdamParams(BaseParams):
     betas: tuple[float, float] = (0.9, 0.999)
-    eps: float = 1e-8
+    eps: float = 1e-6
     kahan_sum: bool = False
     use_kahan_summation: bool = False
 
@@ -31,9 +31,9 @@ TESTS = [
     OptTest(
         name="anyadam_kahan",
         optimi_class=optimi.Adam,
-        optimi_params=AnyAdamParams(lr=1e-3, betas=(0.9, 0.99), eps=1e-6, weight_decay=0, kahan_sum=True),
+        optimi_params=AnyAdamParams(betas=(0.9, 0.99), kahan_sum=True),
         reference_class=AnyPrecisionAdamW,
-        reference_params=AnyAdamParams(lr=1e-3, betas=(0.9, 0.99), eps=1e-6, weight_decay=0, use_kahan_summation=True),
+        reference_params=AnyAdamParams(betas=(0.9, 0.99), use_kahan_summation=True),
         only_dtypes=[torch.bfloat16],
         any_precision=True,
         custom_tolerances={torch.bfloat16: Tolerance(rtol=2e-2, atol=2e-3, max_error_rate=0.01, equal_nan=False)},
@@ -41,9 +41,9 @@ TESTS = [
     OptTest(
         name="anyadam_kahan_wd",
         optimi_class=optimi.AdamW,
-        optimi_params=AnyAdamParams(lr=1e-3, betas=(0.9, 0.99), eps=1e-6, weight_decay=0.01, kahan_sum=True),
+        optimi_params=AnyAdamParams(betas=(0.9, 0.99), weight_decay=0.01, kahan_sum=True),
         reference_class=AnyPrecisionAdamW,
-        reference_params=AnyAdamParams(lr=1e-3, betas=(0.9, 0.99), eps=1e-6, weight_decay=0.01, use_kahan_summation=True),
+        reference_params=AnyAdamParams(betas=(0.9, 0.99), weight_decay=0.01, use_kahan_summation=True),
         only_dtypes=[torch.bfloat16],
         any_precision=True,
         custom_tolerances={torch.bfloat16: Tolerance(rtol=5e-2, atol=1e-2, max_error_rate=0.01, equal_nan=False)},
@@ -51,9 +51,9 @@ TESTS = [
     OptTest(
         name="anyadam_kahan_decoupled_lr",
         optimi_class=optimi.AdamW,
-        optimi_params=AnyAdamParams(lr=1e-3, betas=(0.9, 0.99), eps=1e-6, weight_decay=1e-5, decouple_lr=True, kahan_sum=True),
+        optimi_params=AnyAdamParams(betas=(0.9, 0.99), weight_decay=1e-5, decouple_lr=True, kahan_sum=True),
         reference_class=AnyPrecisionAdamW,
-        reference_params=AnyAdamParams(lr=1e-3, betas=(0.9, 0.99), eps=1e-6, weight_decay=1e-2, use_kahan_summation=True),
+        reference_params=AnyAdamParams(betas=(0.9, 0.99), weight_decay=1e-2, use_kahan_summation=True),
         only_dtypes=[torch.bfloat16],
         any_precision=True,
         custom_tolerances={torch.bfloat16: Tolerance(rtol=2e-2, atol=2e-3, max_error_rate=0.01, equal_nan=False)},

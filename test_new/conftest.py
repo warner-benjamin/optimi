@@ -7,12 +7,11 @@ This module provides pytest configuration, custom mark registration, and the
 import pytest
 import torch
 
-from .cases import optimizer_names
+from .config import optimizer_names
 
 
 def pytest_configure(config):
-    """Configure pytest with custom marks for optimizer testing."""
-
+    "Configure pytest with custom marks for optimizer testing."
     # Register device marks
     config.addinivalue_line("markers", "cpu: mark test to run on CPU")
     config.addinivalue_line("markers", "gpu: mark test to run on GPU")
@@ -31,14 +30,14 @@ def pytest_configure(config):
 
 
 def pytest_addoption(parser):
-    """Add command-line option to specify a single GPU"""
+    "Add command-line option to specify a single GPU."
     parser.addoption("--gpu-id", action="store", type=int, default=None, help="Specify a single GPU to use (e.g. --gpu-id=0)")
 
 
 @pytest.fixture()
 def gpu_device(worker_id, request):
-    """Map xdist workers to available GPU devices in a round-robin fashion,
-    supporting CUDA (NVIDIA/ROCm) and XPU (Intel) backends.
+    """Map xdist workers to available GPU devices in a round-robin fashion, supporting CUDA (NVIDIA/ROCm) and XPU (Intel) backends.
+
     Use a single specified GPU if --gpu-id is provided"""
 
     # Check if specific GPU was requested
@@ -55,9 +54,7 @@ def gpu_device(worker_id, request):
         backend = "mps"
         device_count = 0
     else:
-        # Fallback to cuda for compatibility
-        backend = "cuda"
-        device_count = 0
+        raise RuntimeError("No GPU backend available")
 
     if specific_gpu is not None:
         return torch.device(f"{backend}:{specific_gpu}")
