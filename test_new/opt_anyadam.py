@@ -1,4 +1,4 @@
-"""AnyAdam optimizer tests using the new Case format (manual list)."""
+"""AnyAdam optimizer tests using the new OptTest format (manual list)."""
 
 from dataclasses import dataclass
 
@@ -6,7 +6,7 @@ import optimi
 import torch
 from tests.reference import AnyPrecisionAdamW
 
-from .cases import BaseParams, Case, Tolerance
+from .cases import BaseParams, OptTest, Tolerance
 
 
 @dataclass
@@ -28,7 +28,7 @@ class AnyAdamParams(BaseParams):
 
 
 TESTS = [
-    Case(
+    OptTest(
         name="anyadam_kahan",
         optimi_class=optimi.Adam,
         optimi_params=AnyAdamParams(lr=1e-3, betas=(0.9, 0.99), eps=1e-6, weight_decay=0, kahan_sum=True),
@@ -38,7 +38,7 @@ TESTS = [
         any_precision=True,
         custom_tolerances={torch.bfloat16: Tolerance(rtol=2e-2, atol=2e-3, max_error_rate=0.01, equal_nan=False)},
     ),
-    Case(
+    OptTest(
         name="anyadam_kahan_wd",
         optimi_class=optimi.AdamW,
         optimi_params=AnyAdamParams(lr=1e-3, betas=(0.9, 0.99), eps=1e-6, weight_decay=0.01, kahan_sum=True),
@@ -48,7 +48,7 @@ TESTS = [
         any_precision=True,
         custom_tolerances={torch.bfloat16: Tolerance(rtol=5e-2, atol=1e-2, max_error_rate=0.01, equal_nan=False)},
     ),
-    Case(
+    OptTest(
         name="anyadam_kahan_decoupled_lr",
         optimi_class=optimi.AdamW,
         optimi_params=AnyAdamParams(lr=1e-3, betas=(0.9, 0.99), eps=1e-6, weight_decay=1e-5, decouple_lr=True, kahan_sum=True),

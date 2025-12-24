@@ -1,4 +1,4 @@
-"""AdamW optimizer definitions using the new Case/variants flow."""
+"""AdamW optimizer definitions using the new OptTest/variants flow."""
 
 from dataclasses import dataclass
 
@@ -6,7 +6,7 @@ import optimi
 import torch
 from tests import reference
 
-from .cases import BaseParams, Case
+from .cases import BaseParams, OptTest
 
 
 @dataclass
@@ -16,7 +16,7 @@ class AdamWParams(BaseParams):
 
 
 # Provide BASE with fully_decoupled_reference so decoupled_lr uses DecoupledAdamW
-BASE = Case(
+BASE = OptTest(
     name="adamw",
     optimi_class=optimi.AdamW,
     optimi_params=AdamWParams(lr=1e-3, betas=(0.9, 0.99), eps=1e-6, weight_decay=0),

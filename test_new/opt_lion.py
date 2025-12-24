@@ -1,11 +1,11 @@
-"""Lion optimizer tests in new Case format (manual list to match prior values)."""
+"""Lion optimizer tests in new OptTest format (manual list to match prior values)."""
 
 from dataclasses import dataclass
 
 import optimi
 from tests.reference import lion as reference_lion
 
-from .cases import BaseParams, Case
+from .cases import BaseParams, OptTest
 
 
 @dataclass
@@ -14,21 +14,21 @@ class LionParams(BaseParams):
 
 
 TESTS = [
-    Case(
+    OptTest(
         name="lion_base",
         optimi_class=optimi.Lion,
         optimi_params=LionParams(lr=1e-4, betas=(0.9, 0.99), weight_decay=0),
         reference_class=reference_lion.Lion,
         reference_params=LionParams(lr=1e-4, betas=(0.9, 0.99), weight_decay=0),
     ),
-    Case(
+    OptTest(
         name="lion_decoupled_wd",
         optimi_class=optimi.Lion,
         optimi_params=LionParams(lr=1e-4, betas=(0.9, 0.99), weight_decay=0.1, decouple_wd=True),
         reference_class=reference_lion.Lion,
         reference_params=LionParams(lr=1e-4, betas=(0.9, 0.99), weight_decay=0.1),
     ),
-    Case(
+    OptTest(
         name="lion_decoupled_lr",
         optimi_class=optimi.Lion,
         optimi_params=LionParams(lr=1e-4, betas=(0.9, 0.99), weight_decay=1e-5, decouple_lr=True),

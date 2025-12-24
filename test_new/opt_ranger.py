@@ -1,11 +1,11 @@
-"""Ranger optimizer tests using new Case format (base only)."""
+"""Ranger optimizer tests using new OptTest format (base only)."""
 
 from dataclasses import dataclass
 
 import optimi
 from tests import reference
 
-from .cases import BaseParams, Case, TestType
+from .cases import BaseParams, OptTest, TestType
 
 
 @dataclass
@@ -17,7 +17,7 @@ class RangerParams(BaseParams):
 
 
 TESTS = [
-    Case(
+    OptTest(
         name="ranger_base",
         optimi_class=optimi.Ranger,
         optimi_params=RangerParams(lr=1e-3, betas=(0.9, 0.99), eps=1e-8, weight_decay=0),

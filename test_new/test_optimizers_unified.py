@@ -2,10 +2,8 @@ import pytest
 import torch
 from optimi.utils import MIN_TORCH_2_6
 
-from .cases import Backend, DeviceType, TestType, discover_cases
+from .cases import Backend, DeviceType, OptTest, TestType, discover_tests
 from .runners import run_accumulation, run_correctness, run_gradient_release
-
-CASES = tuple(discover_cases())
 
 DEVICE_PARAMS = [
     pytest.param(DeviceType.cpu, marks=pytest.mark.cpu, id=DeviceType.cpu.value),
@@ -21,11 +19,11 @@ BACKEND_PARAMS = [
 ]
 
 # Attach per-optimizer marks so users can -m adam, -m sgd, etc.
-OPTIM_PARAMS = [pytest.param(c, id=c.name, marks=getattr(pytest.mark, c.optimizer_name)) for c in CASES]
+OPTIMIZERS = [pytest.param(c, id=c.name, marks=getattr(pytest.mark, c.optimizer_name)) for c in discover_tests()]
 
 # Dimension parameter spaces (match legacy tests)
 # Correctness dims: CPU -> (64,64), (64,128); GPU -> (256,256), (256,512), (256,1024), (256,2048)
-CORRECTNESS_DIMS = [
+FULL_DIMS = [
     pytest.param((DeviceType.cpu, (64, 64)), id="cpu-64x64"),
     pytest.param((DeviceType.cpu, (64, 128)), id="cpu-64x128"),
     pytest.param((DeviceType.gpu, (256, 256)), id="gpu-256x256"),
@@ -34,14 +32,14 @@ CORRECTNESS_DIMS = [
     pytest.param((DeviceType.gpu, (256, 2048)), id="gpu-256x2048"),
 ]
 
-# Gradient release and accumulation dims (GPU-only): (128,256) and (128,1024)
-GR_DIMS = [
+# Gradient release and accumulation dims: (128,256) and (128,1024)
+SUBSET_DIMS = [
     pytest.param((128, 256), id="gr-128x256"),
     pytest.param((128, 1024), id="gr-128x1024"),
 ]
 
 
-def _should_skip(test_type: TestType, case, device_type: DeviceType, dtype, backend: Backend) -> bool:
+def _should_skip(test_type: TestType, case: OptTest, device_type: DeviceType, dtype: torch.dtype, backend: Backend) -> bool:
     # Explicit per-case skip
     if test_type in set(case.skip_tests):
         return True
@@ -59,9 +57,11 @@ def _should_skip(test_type: TestType, case, device_type: DeviceType, dtype, back
         return True
 
     # Triton is not supported on MPS
-    if backend == Backend.triton and not (
-        torch.cuda.is_available() or (hasattr(torch, "xpu") and torch.xpu.is_available())
-    ) and (hasattr(torch.backends, "mps") and torch.backends.mps.is_available()):
+    if (
+        backend == Backend.triton
+        and not (torch.cuda.is_available() or (hasattr(torch, "xpu") and torch.xpu.is_available()))
+        and (hasattr(torch.backends, "mps") and torch.backends.mps.is_available())
+    ):
         return True
 
     # GPU availability
@@ -73,7 +73,7 @@ def _should_skip(test_type: TestType, case, device_type: DeviceType, dtype, back
         return True
 
     # Gradient release and accumulation are GPU-only tests
-    if test_type in {TestType.gradient_release, TestType.accumulation} and device_type == DeviceType.cpu:
+    if test_type in (TestType.gradient_release, TestType.accumulation) and device_type == DeviceType.cpu:
         return True
 
     # bfloat16 is not supported on MPS
@@ -85,18 +85,18 @@ def _should_skip(test_type: TestType, case, device_type: DeviceType, dtype, back
     ):
         return True
 
-    # Skip bfloat16 on CPU for most optimizers; allow anyadam-style exceptions via case.any_precision if needed
+    # Skip bfloat16 on CPU for most optimizers; allow anyadam exception via case.any_precision
     if device_type == DeviceType.cpu and dtype == torch.bfloat16 and not case.any_precision:
         return True
 
     return False
 
 
-@pytest.mark.parametrize("case", OPTIM_PARAMS)
+@pytest.mark.parametrize("case", OPTIMIZERS)
 @pytest.mark.parametrize("device_type", DEVICE_PARAMS)
 @pytest.mark.parametrize("dtype", DTYPE_PARAMS)
 @pytest.mark.parametrize("backend", BACKEND_PARAMS)
-@pytest.mark.parametrize("dims_spec", CORRECTNESS_DIMS)
+@pytest.mark.parametrize("dims_spec", FULL_DIMS)
 def test_correctness(case, device_type, dtype, backend, dims_spec, gpu_device):
     if _should_skip(TestType.correctness, case, device_type, dtype, backend):
         pytest.skip()
@@ -107,22 +107,22 @@ def test_correctness(case, device_type, dtype, backend, dims_spec, gpu_device):
     run_correctness(case, device, dtype, backend, dims=dims)
 
 
-@pytest.mark.parametrize("case", OPTIM_PARAMS)
+@pytest.mark.parametrize("case", OPTIMIZERS)
 @pytest.mark.parametrize("device_type", [pytest.param(DeviceType.gpu, marks=pytest.mark.gpu, id=DeviceType.gpu.value)])
 @pytest.mark.parametrize("dtype", [pytest.param(torch.float32, marks=pytest.mark.float32, id="float32")])
 @pytest.mark.parametrize("backend", BACKEND_PARAMS)
-@pytest.mark.parametrize("dims", GR_DIMS)
+@pytest.mark.parametrize("dims", SUBSET_DIMS)
 def test_gradient_release(case, device_type, dtype, backend, dims, gpu_device):
     if _should_skip(TestType.gradient_release, case, device_type, dtype, backend):
         pytest.skip()
     run_gradient_release(case, torch.device(gpu_device), dtype, backend, dims=dims)
 
 
-@pytest.mark.parametrize("case", OPTIM_PARAMS)
+@pytest.mark.parametrize("case", OPTIMIZERS)
 @pytest.mark.parametrize("device_type", [pytest.param(DeviceType.gpu, marks=pytest.mark.gpu, id=DeviceType.gpu.value)])
 @pytest.mark.parametrize("dtype", [pytest.param(torch.float32, marks=pytest.mark.float32, id="float32")])
 @pytest.mark.parametrize("backend", BACKEND_PARAMS)
-@pytest.mark.parametrize("dims", GR_DIMS)
+@pytest.mark.parametrize("dims", SUBSET_DIMS)
 def test_accumulation(case, device_type, dtype, backend, dims, gpu_device):
     if _should_skip(TestType.accumulation, case, device_type, dtype, backend):
         pytest.skip()

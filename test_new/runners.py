@@ -2,11 +2,12 @@ from __future__ import annotations
 
 import io
 import random
+
 import torch
 from optimi import prepare_for_gradient_release, remove_gradient_release
 from torch import Tensor
 
-from .cases import Backend, Case, DeviceType, TestType, Tolerance
+from .cases import Backend, DeviceType, OptTest, TestType, Tolerance
 from .config import DEFAULTS
 
 
@@ -15,7 +16,7 @@ def _device_type(device: torch.device) -> DeviceType:
 
 
 def _get_iterations(
-    case: Case,
+    case: OptTest,
     test_type: TestType,
     default: int,
     device: torch.device | None = None,
@@ -71,7 +72,7 @@ class MLP(torch.nn.Module):
 
 
 def run_correctness(
-    case: Case,
+    case: OptTest,
     device: torch.device,
     dtype: torch.dtype,
     backend: Backend,
@@ -185,7 +186,7 @@ def run_correctness(
 
 
 def run_gradient_release(
-    case: Case,
+    case: OptTest,
     device: torch.device,
     dtype: torch.dtype,
     backend: Backend,
@@ -309,7 +310,7 @@ def run_gradient_release(
 
 
 def run_accumulation(
-    case: Case,
+    case: OptTest,
     device: torch.device,
     dtype: torch.dtype,
     backend: Backend,

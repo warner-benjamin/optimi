@@ -1,4 +1,4 @@
-"""SGD optimizer definitions using the new Case/variants flow (manual list)."""
+"""SGD optimizer definitions using the new OptTest/variants flow (manual list)."""
 
 from dataclasses import dataclass
 from typing import Any
@@ -7,7 +7,7 @@ import optimi
 import torch
 from tests import reference
 
-from .cases import BaseParams, Case, TestType
+from .cases import BaseParams, OptTest, TestType
 
 
 @dataclass
@@ -26,7 +26,7 @@ class SGDParams(BaseParams):
 
 # Manual list to mirror the original explicit coverage for SGD
 TESTS = [
-    Case(
+    OptTest(
         name="sgd_base",
         optimi_class=optimi.SGD,
         optimi_params=SGDParams(lr=1e-3, momentum=0, dampening=False, weight_decay=0),
@@ -34,21 +34,21 @@ TESTS = [
         reference_params=SGDParams(lr=1e-3, momentum=0, dampening=0, weight_decay=0),
         skip_tests=[TestType.accumulation],
     ),
-    Case(
+    OptTest(
         name="sgd_momentum",
         optimi_class=optimi.SGD,
         optimi_params=SGDParams(lr=1e-3, momentum=0.9, dampening=False, weight_decay=0),
         reference_class=torch.optim.SGD,
         reference_params=SGDParams(lr=1e-3, momentum=0.9, dampening=0, weight_decay=0),
     ),
-    Case(
+    OptTest(
         name="sgd_dampening",
         optimi_class=optimi.SGD,
         optimi_params=SGDParams(lr=1e-3, momentum=0.9, dampening=True, weight_decay=0, torch_init=True),
         reference_class=torch.optim.SGD,
         reference_params=SGDParams(lr=1e-3, momentum=0.9, dampening=0.9, weight_decay=0),
     ),
-    Case(
+    OptTest(
         name="sgd_weight_decay",
         optimi_class=optimi.SGD,
         optimi_params=SGDParams(lr=1e-3, momentum=0.9, dampening=False, weight_decay=1e-2, decouple_wd=False),
@@ -56,7 +56,7 @@ TESTS = [
         reference_params=SGDParams(lr=1e-3, momentum=0.9, dampening=0, weight_decay=1e-2),
         skip_tests=[TestType.accumulation],
     ),
-    Case(
+    OptTest(
         name="sgd_decoupled_lr",
         optimi_class=optimi.SGD,
         optimi_params=SGDParams(lr=1e-3, momentum=0.9, dampening=True, decouple_lr=True, weight_decay=1e-5, torch_init=True),

@@ -1,4 +1,4 @@
-"""RAdam optimizer definitions using the new Case/variants flow."""
+"""RAdam optimizer definitions using the new OptTest/variants flow."""
 
 import inspect
 from dataclasses import dataclass, field
@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 import optimi
 import torch
 
-from .cases import BaseParams, Case, Tolerance
+from .cases import BaseParams, OptTest, Tolerance
 
 
 @dataclass
@@ -20,7 +20,7 @@ class RAdamParams(BaseParams):
             self.decoupled_weight_decay = True
 
 
-BASE = Case(
+BASE = OptTest(
     name="radam",
     optimi_class=optimi.RAdam,
     optimi_params=RAdamParams(lr=1e-3, betas=(0.9, 0.99), weight_decay=0),
