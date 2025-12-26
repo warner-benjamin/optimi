@@ -36,12 +36,15 @@ __all__ = ["StableAdamW", "stableadamw"]
 
 # this is required as Optimizer.load_state_dict casts the state to the param's dtype
 def _restore_triton_scratch_state(optim: OptimiOptimizer):
-    "Restores triton scratch to fp32 after potentially cast to low precision by load_state_dict."
+    "Restores or creates scratch to fp32 after potentially cast to low precision by load_state_dict."
     for group in optim.param_groups:
         if group["triton"]:
             for p in group["params"]:
                 state = optim.state[p]
-                state["mean_square"] = state["mean_square"].to(dtype=torch.float32, device=p.device)
+                if "mean_square" in state:
+                    state["mean_square"] = state["mean_square"].to(dtype=torch.float32, device=p.device)
+                else:
+                    state["mean_square"] = torch.zeros(1, dtype=torch.float32, device=p.device)
 
 
 class StableAdamW(OptimiOptimizer):
