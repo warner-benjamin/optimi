@@ -76,6 +76,9 @@ markers = [
     "sgd",
     "stableadam",
 ]
+filterwarnings = [
+    "ignore:Parameter `foreach` is deprecated:DeprecationWarning",
+]
 
 [tool.ruff]
 line-length = 140
