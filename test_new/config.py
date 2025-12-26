@@ -14,7 +14,7 @@ from torch.optim import Optimizer
 
 
 class OptTestType(Enum):
-    default = "default"
+    normal = "normal"
     gradient_release = "gradient_release"
     accumulation = "accumulation"
 
@@ -39,7 +39,7 @@ class Tolerance:
 
 
 @dataclass()
-class CorrectnessSpec:
+class NormalSpec:
     iterations_cpu: int = 20
     iterations_gpu: int = 40
     batch_cpu: int = 1
@@ -89,18 +89,18 @@ class AccumulationSpec:
 
 @dataclass()
 class TestSpec:
-    default: CorrectnessSpec = CorrectnessSpec()
-    gradient_release: GradientReleaseSpec = GradientReleaseSpec()
-    accumulation: AccumulationSpec = AccumulationSpec()
+    normal: NormalSpec = field(default_factory=NormalSpec)
+    gradient_release: GradientReleaseSpec = field(default_factory=GradientReleaseSpec)
+    accumulation: AccumulationSpec = field(default_factory=AccumulationSpec)
 
 
 def with_updated_spec(
-    spec: TestSpec | CorrectnessSpec | GradientReleaseSpec | AccumulationSpec | None,
+    spec: TestSpec | NormalSpec | GradientReleaseSpec | AccumulationSpec | None,
     test_type: OptTestType | None = None,
     tolerances_override: dict[torch.dtype, Tolerance] | None = None,
 ) -> TestSpec:
-    if isinstance(spec, (CorrectnessSpec, GradientReleaseSpec, AccumulationSpec)):
-        if isinstance(spec, CorrectnessSpec):
+    if isinstance(spec, (NormalSpec, GradientReleaseSpec, AccumulationSpec)):
+        if isinstance(spec, NormalSpec):
             base = TestSpec(default=spec)
         elif isinstance(spec, GradientReleaseSpec):
             base = TestSpec(gradient_release=spec)
@@ -115,15 +115,13 @@ def with_updated_spec(
     if test_type is None:
         return base
 
-    if test_type == OptTestType.default:
-        merged = {**base.default.tolerance, **tolerances_override}
-        return replace(base, default=replace(base.default, tolerance=merged))
+    if test_type == OptTestType.normal:
+        merged = {**base.normal.tolerance, **tolerances_override}
+        return replace(base, normal=replace(base.normal, tolerance=merged))
     if test_type == OptTestType.gradient_release:
-        merged = {**base.gradient_release.baseline_tolerance, **tolerances_override}
-        return replace(base, gradient_release=replace(base.gradient_release, baseline_tolerance=merged))
+        return replace(base, gradient_release=replace(base.gradient_release, **tolerances_override))
     if test_type == OptTestType.accumulation:
-        merged = {**base.accumulation.tolerance, **tolerances_override}
-        return replace(base, accumulation=replace(base.accumulation, tolerance=merged))
+        return replace(base, accumulation=replace(base.accumulation, **tolerances_override))
     raise ValueError(f"Unknown test type: {test_type}")
 
 

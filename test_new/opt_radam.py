@@ -26,6 +26,6 @@ BASE = OptTest(
     optimi_params=RAdamParams(),
     reference_class=torch.optim.RAdam,
     reference_params=RAdamParams(),
-    spec=with_updated_spec(spec=None, test_type=OptTestType.default, tolerances_override={torch.float32: Tolerance(max_error_rate=0.001)}),
+    spec=with_updated_spec(spec=None, test_type=OptTestType.normal, tolerances_override={torch.float32: Tolerance(max_error_rate=0.001)}),
     test_decoupled_wd="decoupled_weight_decay" in inspect.signature(torch.optim.RAdam.__init__).parameters,
 )

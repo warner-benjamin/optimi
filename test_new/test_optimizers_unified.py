@@ -23,8 +23,7 @@ BACKEND_PARAMS = [
 # Attach per-optimizer marks so users can -m adam, -m sgd, etc.
 OPTIMIZERS = [pytest.param(c, id=c.name, marks=getattr(pytest.mark, c.optimizer_name)) for c in discover_tests()]
 
-# Dimension parameter spaces (match legacy tests)
-# Correctness dims: CPU -> (64,64), (64,128); GPU -> (256,256), (256,512), (256,1024), (256,2048)
+# Full dimensions: CPU -> (64,64), (64,128); GPU -> (256,256), (256,512), (256,1024), (256,2048)
 FULL_DIMS = [
     pytest.param((DeviceType.cpu, (64, 64)), id="cpu-64x64"),
     pytest.param((DeviceType.cpu, (64, 128)), id="cpu-64x128"),
@@ -107,7 +106,7 @@ def _param_id(param: ParameterSet) -> str:
 
 
 def _build_params(test_type: OptTestType) -> list[ParameterSet]:
-    if test_type == OptTestType.default:
+    if test_type == OptTestType.normal:
         device_params = DEVICE_PARAMS
         dtype_params = DTYPE_PARAMS
         dims_params = FULL_DIMS
@@ -122,7 +121,7 @@ def _build_params(test_type: OptTestType) -> list[ParameterSet]:
             for dtype_param in dtype_params:
                 for backend_param in BACKEND_PARAMS:
                     for dims_param in dims_params:
-                        if test_type == OptTestType.default and _param_value(dims_param)[0] != _param_value(device_param):
+                        if test_type == OptTestType.normal and _param_value(dims_param)[0] != _param_value(device_param):
                             continue
                         if _should_skip(
                             test_type,
@@ -155,11 +154,11 @@ def _build_params(test_type: OptTestType) -> list[ParameterSet]:
     return params
 
 
-@pytest.mark.parametrize("opttest, device_type, dtype, backend, dims_spec", _build_params(OptTestType.default))
-def test_default(opttest, device_type, dtype, backend, dims_spec, gpu_device):
+@pytest.mark.parametrize("opttest, device_type, dtype, backend, dims_spec", _build_params(OptTestType.normal))
+def test_normal(opttest, device_type, dtype, backend, dims_spec, gpu_device):
     _, dims = dims_spec
     device = torch.device(gpu_device if device_type == DeviceType.gpu else "cpu")
-    run_test(opttest, device, dtype, backend, OptTestType.default, dims=dims)
+    run_test(opttest, device, dtype, backend, OptTestType.normal, dims=dims)
 
 
 @pytest.mark.parametrize("opttest, device_type, dtype, backend, dims", _build_params(OptTestType.gradient_release))

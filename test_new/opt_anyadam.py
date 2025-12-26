@@ -38,7 +38,7 @@ TESTS = [
         any_precision=True,
         spec=with_updated_spec(
             spec=None,
-            test_type=OptTestType.default,
+            test_type=OptTestType.normal,
             tolerances_override={torch.bfloat16: Tolerance(rtol=2e-2, atol=2e-3, max_error_rate=0.01)},
         ),
     ),
@@ -52,7 +52,7 @@ TESTS = [
         any_precision=True,
         spec=with_updated_spec(
             spec=None,
-            test_type=OptTestType.default,
+            test_type=OptTestType.normal,
             tolerances_override={torch.bfloat16: Tolerance(rtol=5e-2, atol=1e-2, max_error_rate=0.01)},
         ),
     ),
@@ -66,7 +66,7 @@ TESTS = [
         any_precision=True,
         spec=with_updated_spec(
             spec=None,
-            test_type=OptTestType.default,
+            test_type=OptTestType.normal,
             tolerances_override={torch.bfloat16: Tolerance(rtol=2e-2, atol=2e-3, max_error_rate=0.01)},
         ),
     ),

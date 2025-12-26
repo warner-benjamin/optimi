@@ -7,7 +7,7 @@ import torch
 from optimi import prepare_for_gradient_release, remove_gradient_release
 from torch import Tensor
 
-from .config import Backend, DeviceType, OptTest, OptTestType, Tolerance
+from .config import Backend, DeviceType, OptTest, OptTestType
 
 
 def _device_type(device: torch.device) -> DeviceType:
@@ -49,11 +49,11 @@ def assert_most_approx_close(
 
     if max_error_rate is not None:
         if error_count > (a.numel()) * max_error_rate and error_count > max_error_count:
-            print(f"{name}Too many values not close: assert {error_count} < {(a.numel()) * max_error_rate}")
-            torch.testing.assert_close(a.float(), b.float(), rtol=rtol, atol=atol)
+            msg = f"{name}Too many values not close: assert {error_count} < {(a.numel()) * max_error_rate}"
+            torch.testing.assert_close(a.float(), b.float(), rtol=rtol, atol=atol, msg=msg)
     elif error_count > max_error_count:
-        print(f"{name}Too many values not close: assert {error_count} < {max_error_count}")
-        torch.testing.assert_close(a.float(), b.float(), rtol=rtol, atol=atol)
+        msg = f"{name}Too many values not close: assert {error_count} < {max_error_count}"
+        torch.testing.assert_close(a.float(), b.float(), rtol=rtol, atol=atol, msg=msg)
 
 
 class MLP(torch.nn.Module):
@@ -80,19 +80,19 @@ def run_test(
     test_type: OptTestType,
     dims: tuple[int, int] | None = None,
 ) -> None:
-    if test_type == OptTestType.default:
-        default_spec = opttest.spec.default
-        default_iters = default_spec.iterations_cpu if device.type == "cpu" else default_spec.iterations_gpu
-        iterations = _get_iterations(opttest, test_type, default_iters, device=device, dtype=dtype)
-        tolerance = default_spec.tolerance[dtype]
+    if test_type == OptTestType.normal:
+        normal_spec = opttest.spec.normal
+        normal_iters = normal_spec.iterations_cpu if device.type == "cpu" else normal_spec.iterations_gpu
+        iterations = _get_iterations(opttest, test_type, normal_iters, device=device, dtype=dtype)
+        tolerance = normal_spec.tolerance[dtype]
 
         if dims is None:
             dim1, dim2 = (64, 128) if device.type == "cpu" else (256, 512)
         else:
             dim1, dim2 = dims
 
-        batch_size = default_spec.batch_cpu if device.type == "cpu" else default_spec.batch_gpu
-        max_error_count = default_spec.max_error_cpu if device.type == "cpu" else default_spec.max_error_gpu
+        batch_size = normal_spec.batch_cpu if device.type == "cpu" else normal_spec.batch_gpu
+        max_error_count = normal_spec.max_error_cpu if device.type == "cpu" else normal_spec.max_error_gpu
         max_error_rate = tolerance.max_error_rate
 
     elif test_type == OptTestType.gradient_release:
@@ -126,7 +126,7 @@ def run_test(
     else:
         m3 = None
 
-    if test_type == OptTestType.default and not opttest.any_precision and dtype != torch.float32:
+    if test_type == OptTestType.normal and not opttest.any_precision and dtype != torch.float32:
         for p in m1.parameters():
             p.data = p.data.float()
 
@@ -139,7 +139,7 @@ def run_test(
     torch_optimizers: dict[torch.nn.Parameter, torch.optim.Optimizer] | None = None
     pytorch_hooks: list[torch.utils.hooks.RemovableHandle] = []
 
-    if test_type == OptTestType.default:
+    if test_type == OptTestType.normal:
         reference_optimizer = reference_class(m1.parameters(), **reference_kwargs)
         optimi_optimizer = opttest.optimi_class(m2.parameters(), **optimi_kwargs)
         buffer = io.BytesIO()
@@ -167,12 +167,12 @@ def run_test(
 
     for i in range(iterations):
         input1 = torch.randn(batch_size, dim1, device=device, dtype=dtype)
-        if test_type == OptTestType.default:
+        if test_type == OptTestType.normal:
             input2 = input1.detach().clone()
         else:
             input2 = input1.clone()
         target1 = torch.randn(batch_size, 1, device=device, dtype=dtype)
-        if test_type == OptTestType.default:
+        if test_type == OptTestType.normal:
             target2 = target1.detach().clone()
         else:
             target2 = target1.clone()
@@ -184,7 +184,7 @@ def run_test(
             input3 = None
             target3 = None
 
-        if test_type == OptTestType.default and not opttest.any_precision and dtype != torch.float32:
+        if test_type == OptTestType.normal and not opttest.any_precision and dtype != torch.float32:
             input1 = input1.float()
             target1 = target1.float()
 
@@ -204,7 +204,7 @@ def run_test(
         if loss3 is not None:
             loss3.backward()
 
-        if test_type == OptTestType.default:
+        if test_type == OptTestType.normal:
             reference_optimizer.step()
             optimi_optimizer.step()
             reference_optimizer.zero_grad()
@@ -221,7 +221,7 @@ def run_test(
                 optimi_optimizer.step()
                 optimi_optimizer.zero_grad()
 
-        if test_type == OptTestType.default:
+        if test_type == OptTestType.normal:
             assert_most_approx_close(
                 m1.fc1.weight,
                 m2.fc1.weight,
