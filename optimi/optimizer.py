@@ -37,19 +37,26 @@ class OptimiOptimizer(Optimizer):
                 category=DeprecationWarning,
             )
 
-        if defaults["decouple_lr"] and defaults["weight_decay"] >= 1e-3:
-            warn(
-                f"You are using weight_decay={defaults['weight_decay']} which is potentially high for decouple_lr={defaults['decouple_lr']}"
-                f". Unlike decoupled weight decay, fully decoupled weight decay does not reduce weight decay by the learning rate.",
-                category=UserWarning,
-            )
-
         if not MIN_TORCH_2_6 and defaults.get("triton", False):
             raise ValueError(f"triton={defaults['triton']} requires PyTorch 2.6 or later. Set triton=False or upgrade PyTorch.")
         if not HAS_TRITON and defaults.get("triton", False):
             raise ImportError("Triton could not be imported on this system. Set triton=False or install Triton.")
 
         super().__init__(params, defaults)
+
+        # Warn if any parameter group uses a potentially high weight decay when fully
+        # decoupling LR from weight decay (decouple_lr=True). Aggregate and warn once.
+        if self.defaults.get("decouple_lr", False):
+            high_wds: list[float] = []
+            for group in self.param_groups:
+                if group.get("decouple_lr", self.defaults.get("decouple_lr", False)) and group.get("weight_decay", 0.0) >= 1e-3:
+                    high_wds.append(group["weight_decay"])
+            if high_wds:
+                warn(
+                    f"You are using weight_decay up to {max(high_wds)} which is potentially high for decouple_lr=True"
+                    f". Unlike decoupled weight decay, fully decoupled weight decay does not reduce weight decay by the learning rate.",
+                    category=UserWarning,
+                )
 
         # by default perform the normal parameter update step
         self._optimizer_accumulation = False

@@ -16,6 +16,8 @@ Using Kahan summation for accurate BFloat16 training is as simple as replacing a
 
     When training in BFloat16, keep rotary buffers, rotary calculations, and token embedding layers in Float32, as these benefit from full precision. This results in a small memory increase and speed decrease, but can help guarantee equivalent results with mixed precision training.
 
+    optimi's [`to_low_precision`][optimi.utils.to_low_precision] simplifies keeping these layers in Float32.
+
 By default, optimi optimizers will automatically use Kahan summation for any layers training in low precision. Set `kahan_sum=False` to disable.
 
 ## Mixed Precision
