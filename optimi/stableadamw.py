@@ -36,7 +36,7 @@ __all__ = ["StableAdamW", "stableadamw"]
 
 # this is required as Optimizer.load_state_dict casts the state to the param's dtype
 def _restore_triton_scratch_state(optim: OptimiOptimizer):
-    "Restores or creates scratch to fp32 after potentially cast to low precision by load_state_dict."
+    "Restore or create scratch to fp32 after potentially cast to low precision by load_state_dict."
     for group in optim.param_groups:
         if group["triton"]:
             for p in group["params"]:
