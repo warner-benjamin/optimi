@@ -6,7 +6,7 @@ import optimi
 import torch
 from tests.reference import AnyPrecisionAdamW
 
-from .config import BaseParams, OptTest, Tolerance
+from .config import BaseParams, OptTest, OptTestType, Tolerance, with_updated_spec
 
 
 @dataclass
@@ -36,7 +36,11 @@ TESTS = [
         reference_params=AnyAdamParams(betas=(0.9, 0.99), use_kahan_summation=True),
         only_dtypes=[torch.bfloat16],
         any_precision=True,
-        custom_tolerances={torch.bfloat16: Tolerance(rtol=2e-2, atol=2e-3, max_error_rate=0.01, equal_nan=False)},
+        spec=with_updated_spec(
+            spec=None,
+            test_type=OptTestType.default,
+            tolerances_override={torch.bfloat16: Tolerance(rtol=2e-2, atol=2e-3, max_error_rate=0.01)},
+        ),
     ),
     OptTest(
         name="anyadam_kahan_wd",
@@ -46,7 +50,11 @@ TESTS = [
         reference_params=AnyAdamParams(betas=(0.9, 0.99), weight_decay=0.01, use_kahan_summation=True),
         only_dtypes=[torch.bfloat16],
         any_precision=True,
-        custom_tolerances={torch.bfloat16: Tolerance(rtol=5e-2, atol=1e-2, max_error_rate=0.01, equal_nan=False)},
+        spec=with_updated_spec(
+            spec=None,
+            test_type=OptTestType.default,
+            tolerances_override={torch.bfloat16: Tolerance(rtol=5e-2, atol=1e-2, max_error_rate=0.01)},
+        ),
     ),
     OptTest(
         name="anyadam_kahan_decoupled_lr",
@@ -56,6 +64,10 @@ TESTS = [
         reference_params=AnyAdamParams(betas=(0.9, 0.99), weight_decay=1e-2, use_kahan_summation=True),
         only_dtypes=[torch.bfloat16],
         any_precision=True,
-        custom_tolerances={torch.bfloat16: Tolerance(rtol=2e-2, atol=2e-3, max_error_rate=0.01, equal_nan=False)},
+        spec=with_updated_spec(
+            spec=None,
+            test_type=OptTestType.default,
+            tolerances_override={torch.bfloat16: Tolerance(rtol=2e-2, atol=2e-3, max_error_rate=0.01)},
+        ),
     ),
 ]

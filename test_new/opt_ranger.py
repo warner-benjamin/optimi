@@ -5,7 +5,7 @@ from dataclasses import dataclass
 import optimi
 from tests import reference
 
-from .config import BaseParams, OptTest, TestType
+from .config import BaseParams, OptTest, OptTestType
 
 
 @dataclass
@@ -24,6 +24,6 @@ TESTS = [
         reference_class=reference.Ranger,
         reference_params=RangerParams(),
         # Match legacy longer gradient-release coverage due to Lookahead cadence.
-        custom_iterations={TestType.gradient_release: 160},
+        custom_iterations={OptTestType.gradient_release: 160},
     )
 ]

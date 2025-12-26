@@ -3,8 +3,8 @@ import torch
 from _pytest.mark.structures import ParameterSet
 from optimi.utils import MIN_TORCH_2_6
 
-from .config import Backend, DeviceType, OptTest, TestType, discover_tests
-from .runners import run_accumulation, run_correctness, run_gradient_release
+from .config import Backend, DeviceType, OptTest, OptTestType, discover_tests
+from .runner import run_test
 
 DEVICE_PARAMS = [
     pytest.param(DeviceType.cpu, marks=pytest.mark.cpu, id=DeviceType.cpu.value),
@@ -41,7 +41,7 @@ SUBSET_DIMS = [
 ]
 
 
-def _should_skip(test_type: TestType, opttest: OptTest, device_type: DeviceType, dtype: torch.dtype, backend: Backend) -> bool:
+def _should_skip(test_type: OptTestType, opttest: OptTest, device_type: DeviceType, dtype: torch.dtype, backend: Backend) -> bool:
     # Explicit per-opttest skip
     if test_type in set(opttest.skip_tests):
         return True
@@ -75,7 +75,11 @@ def _should_skip(test_type: TestType, opttest: OptTest, device_type: DeviceType,
         return True
 
     # Gradient release and accumulation are GPU-only tests
-    if test_type in (TestType.gradient_release, TestType.accumulation) and device_type == DeviceType.cpu:
+    if test_type in (OptTestType.gradient_release, OptTestType.accumulation) and device_type == DeviceType.cpu:
+        return True
+
+    # Gradient release / accumulation are incompatible with foreach
+    if test_type in (OptTestType.gradient_release, OptTestType.accumulation) and backend == Backend.foreach:
         return True
 
     # bfloat16 is not supported on MPS
@@ -102,8 +106,8 @@ def _param_id(param: ParameterSet) -> str:
     return param.id or str(param.values[0])
 
 
-def _build_params(test_type: TestType) -> list[ParameterSet]:
-    if test_type == TestType.correctness:
+def _build_params(test_type: OptTestType) -> list[ParameterSet]:
+    if test_type == OptTestType.default:
         device_params = DEVICE_PARAMS
         dtype_params = DTYPE_PARAMS
         dims_params = FULL_DIMS
@@ -118,7 +122,7 @@ def _build_params(test_type: TestType) -> list[ParameterSet]:
             for dtype_param in dtype_params:
                 for backend_param in BACKEND_PARAMS:
                     for dims_param in dims_params:
-                        if test_type == TestType.correctness and _param_value(dims_param)[0] != _param_value(device_param):
+                        if test_type == OptTestType.default and _param_value(dims_param)[0] != _param_value(device_param):
                             continue
                         if _should_skip(
                             test_type,
@@ -151,18 +155,18 @@ def _build_params(test_type: TestType) -> list[ParameterSet]:
     return params
 
 
-@pytest.mark.parametrize("opttest, device_type, dtype, backend, dims_spec", _build_params(TestType.correctness))
-def test_correctness(opttest, device_type, dtype, backend, dims_spec, gpu_device):
+@pytest.mark.parametrize("opttest, device_type, dtype, backend, dims_spec", _build_params(OptTestType.default))
+def test_default(opttest, device_type, dtype, backend, dims_spec, gpu_device):
     _, dims = dims_spec
     device = torch.device(gpu_device if device_type == DeviceType.gpu else "cpu")
-    run_correctness(opttest, device, dtype, backend, dims=dims)
+    run_test(opttest, device, dtype, backend, OptTestType.default, dims=dims)
 
 
-@pytest.mark.parametrize("opttest, device_type, dtype, backend, dims", _build_params(TestType.gradient_release))
+@pytest.mark.parametrize("opttest, device_type, dtype, backend, dims", _build_params(OptTestType.gradient_release))
 def test_gradient_release(opttest, device_type, dtype, backend, dims, gpu_device):
-    run_gradient_release(opttest, torch.device(gpu_device), dtype, backend, dims=dims)
+    run_test(opttest, torch.device(gpu_device), dtype, backend, OptTestType.gradient_release, dims=dims)
 
 
-@pytest.mark.parametrize("opttest, device_type, dtype, backend, dims", _build_params(TestType.accumulation))
+@pytest.mark.parametrize("opttest, device_type, dtype, backend, dims", _build_params(OptTestType.accumulation))
 def test_accumulation(opttest, device_type, dtype, backend, dims, gpu_device):
-    run_accumulation(opttest, torch.device(gpu_device), dtype, backend, dims=dims)
+    run_test(opttest, torch.device(gpu_device), dtype, backend, OptTestType.accumulation, dims=dims)

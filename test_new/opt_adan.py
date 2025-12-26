@@ -4,9 +4,10 @@ from dataclasses import dataclass
 from typing import Any
 
 import optimi
+import torch
 from tests import reference
 
-from .config import BaseParams, OptTest
+from .config import BaseParams, DeviceType, OptTest, OptTestType
 
 
 @dataclass
@@ -31,6 +32,7 @@ TESTS = [
         optimi_params=AdanParams(),
         reference_class=reference.Adan,
         reference_params=AdanParams(),
+        custom_iterations={(OptTestType.default, DeviceType.gpu, torch.bfloat16): 20},
     ),
     OptTest(
         name="adan_weight_decay",
@@ -38,6 +40,7 @@ TESTS = [
         optimi_params=AdanParams(weight_decay=2e-2),
         reference_class=reference.Adan,
         reference_params=AdanParams(weight_decay=2e-2),
+        custom_iterations={(OptTestType.default, DeviceType.gpu, torch.bfloat16): 20},
     ),
     OptTest(
         name="adan_adam_wd",
@@ -45,6 +48,7 @@ TESTS = [
         optimi_params=AdanParams(weight_decay=2e-2, adam_wd=True),
         reference_class=reference.Adan,
         reference_params=AdanParams(weight_decay=2e-2, weight_decouple=True),
+        custom_iterations={(OptTestType.default, DeviceType.gpu, torch.bfloat16): 20},
     ),
     OptTest(
         name="adan_decoupled_lr",
@@ -52,5 +56,6 @@ TESTS = [
         optimi_params=AdanParams(weight_decay=2e-5, decouple_lr=True),
         reference_class=reference.Adan,
         reference_params=AdanParams(weight_decay=2e-2),
+        custom_iterations={(OptTestType.default, DeviceType.gpu, torch.bfloat16): 20},
     ),
 ]

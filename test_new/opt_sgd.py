@@ -7,7 +7,7 @@ import optimi
 import torch
 from tests import reference
 
-from .config import BaseParams, OptTest, TestType
+from .config import BaseParams, OptTest, OptTestType
 
 
 @dataclass
@@ -32,7 +32,7 @@ TESTS = [
         optimi_params=SGDParams(),
         reference_class=torch.optim.SGD,
         reference_params=SGDParams(),
-        skip_tests=[TestType.accumulation],
+        skip_tests=[OptTestType.accumulation],
     ),
     OptTest(
         name="sgd_momentum",
@@ -54,7 +54,7 @@ TESTS = [
         optimi_params=SGDParams(momentum=0.9, weight_decay=1e-2),
         reference_class=torch.optim.SGD,
         reference_params=SGDParams(momentum=0.9, weight_decay=1e-2),
-        skip_tests=[TestType.accumulation],
+        skip_tests=[OptTestType.accumulation],
     ),
     OptTest(
         name="sgd_decoupled_lr",

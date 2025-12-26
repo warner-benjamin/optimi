@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 import optimi
 import torch
 
-from .config import BaseParams, OptTest, Tolerance
+from .config import BaseParams, OptTest, OptTestType, Tolerance, with_updated_spec
 
 
 @dataclass
@@ -26,6 +26,6 @@ BASE = OptTest(
     optimi_params=RAdamParams(),
     reference_class=torch.optim.RAdam,
     reference_params=RAdamParams(),
-    custom_tolerances={torch.float32: Tolerance(max_error_rate=0.001)},
+    spec=with_updated_spec(spec=None, test_type=OptTestType.default, tolerances_override={torch.float32: Tolerance(max_error_rate=0.001)}),
     test_decoupled_wd="decoupled_weight_decay" in inspect.signature(torch.optim.RAdam.__init__).parameters,
 )

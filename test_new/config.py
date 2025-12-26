@@ -13,8 +13,8 @@ from optimi.optimizer import OptimiOptimizer
 from torch.optim import Optimizer
 
 
-class TestType(Enum):
-    correctness = "correctness"
+class OptTestType(Enum):
+    default = "default"
     gradient_release = "gradient_release"
     accumulation = "accumulation"
 
@@ -38,31 +38,16 @@ class Tolerance:
     equal_nan: bool = False
 
 
-@dataclass(frozen=True)
-class CorrectnessDefaults:
-    cpu_iterations: int = 20
-    gpu_iterations: int = 40
-    # Special-case: Adan in bf16 on GPU is noisier; align to 20
-    adan_bf16_gpu_iterations: int = 20
+@dataclass()
+class CorrectnessSpec:
+    iterations_cpu: int = 20
+    iterations_gpu: int = 40
+    batch_cpu: int = 1
+    batch_gpu: int = 32
+    max_error_cpu: int = 2
+    max_error_gpu: int = 5
 
-    cpu_dims: tuple[int, int] = (64, 128)
-    gpu_dims: tuple[int, int] = (256, 512)
-
-    cpu_batch_size: int = 1
-    gpu_batch_size: int = 32
-
-    cpu_max_error_count: int = 2
-    gpu_max_error_count: int = 5
-
-
-@dataclass(frozen=True)
-class GradientReleaseDefaults:
-    iterations: int = 40
-    dims: tuple[int, int] = (128, 256)
-    batch_size: int = 32
-    max_error_count: int = 12  # more lenient for noisy updates
-
-    baseline_tolerance: dict[torch.dtype, Tolerance] = field(
+    tolerance: dict[torch.dtype, Tolerance] = field(
         default_factory=lambda: {
             torch.float32: Tolerance(atol=1e-6, rtol=1e-5, max_error_rate=5e-4),
             torch.bfloat16: Tolerance(atol=1e-3, rtol=1e-2, max_error_rate=0.01),
@@ -71,25 +56,75 @@ class GradientReleaseDefaults:
     )
 
 
-@dataclass(frozen=True)
-class AccumulationDefaults:
+@dataclass()
+class GradientReleaseSpec:
     iterations: int = 40
-    dims: tuple[int, int] = (128, 256)
-    batch_size: int = 32
-    tolerance: Tolerance = field(default_factory=lambda: Tolerance(rtol=1e-2, atol=1e-2))
+    batch: int = 32
+    max_error_count: int = 12  # more lenient for noisy updates
+
+    tolerance: dict[torch.dtype, Tolerance] = field(
+        default_factory=lambda: {
+            torch.float32: Tolerance(atol=1e-6, rtol=1e-5, max_error_rate=5e-4),
+            torch.bfloat16: Tolerance(atol=1e-3, rtol=1e-2, max_error_rate=0.01),
+            torch.float16: Tolerance(atol=1e-4, rtol=1e-3, max_error_rate=0.01),
+        }
+    )
+
+
+@dataclass()
+class AccumulationSpec:
+    iterations: int = 40
+    batch: int = 32
     max_error_rate: float = 0.035
     gradient_accumulation_steps: int = 4
 
+    tolerance: dict[torch.dtype, Tolerance] = field(
+        default_factory=lambda: {
+            torch.float32: Tolerance(rtol=1e-2, atol=1e-2),
+            torch.bfloat16: Tolerance(rtol=1e-2, atol=1e-2),
+            torch.float16: Tolerance(rtol=1e-2, atol=1e-2),
+        }
+    )
 
-@dataclass(frozen=True)
-class TestDefaults:
-    correctness: CorrectnessDefaults = CorrectnessDefaults()
-    gradient_release: GradientReleaseDefaults = GradientReleaseDefaults()
-    accumulation: AccumulationDefaults = AccumulationDefaults()
+
+@dataclass()
+class TestSpec:
+    default: CorrectnessSpec = CorrectnessSpec()
+    gradient_release: GradientReleaseSpec = GradientReleaseSpec()
+    accumulation: AccumulationSpec = AccumulationSpec()
 
 
-# Single place to tweak numbers used by runners
-DEFAULTS = TestDefaults()
+def with_updated_spec(
+    spec: TestSpec | CorrectnessSpec | GradientReleaseSpec | AccumulationSpec | None,
+    test_type: OptTestType | None = None,
+    tolerances_override: dict[torch.dtype, Tolerance] | None = None,
+) -> TestSpec:
+    if isinstance(spec, (CorrectnessSpec, GradientReleaseSpec, AccumulationSpec)):
+        if isinstance(spec, CorrectnessSpec):
+            base = TestSpec(default=spec)
+        elif isinstance(spec, GradientReleaseSpec):
+            base = TestSpec(gradient_release=spec)
+        else:
+            base = TestSpec(accumulation=spec)
+    else:
+        base = spec or TestSpec()
+
+    if tolerances_override is None:
+        tolerances_override = {}
+
+    if test_type is None:
+        return base
+
+    if test_type == OptTestType.default:
+        merged = {**base.default.tolerance, **tolerances_override}
+        return replace(base, default=replace(base.default, tolerance=merged))
+    if test_type == OptTestType.gradient_release:
+        merged = {**base.gradient_release.baseline_tolerance, **tolerances_override}
+        return replace(base, gradient_release=replace(base.gradient_release, baseline_tolerance=merged))
+    if test_type == OptTestType.accumulation:
+        merged = {**base.accumulation.tolerance, **tolerances_override}
+        return replace(base, accumulation=replace(base.accumulation, tolerance=merged))
+    raise ValueError(f"Unknown test type: {test_type}")
 
 
 @dataclass
@@ -135,22 +170,16 @@ class OptTest:
     fully_decoupled_reference: type[Optimizer] | None = None
 
     # Behavior / constraints
-    skip_tests: list[TestType] = field(default_factory=list)
+    skip_tests: list[OptTestType] = field(default_factory=list)
     any_precision: bool = False
     test_decoupled_wd: bool = True
-    custom_iterations: dict[TestType | tuple[TestType, DeviceType], int] | None = None
-    custom_tolerances: dict[torch.dtype, Tolerance] | None = None
+    custom_iterations: dict[OptTestType | tuple[OptTestType, DeviceType] | tuple[OptTestType, DeviceType, torch.dtype], int] | None = None
+    spec: TestSpec = field(default_factory=TestSpec)
     only_dtypes: list[torch.dtype] | None = None
 
     def __post_init__(self):
         if self.reference_params is None:
             self.reference_params = self.optimi_params
-        if self.custom_tolerances is None:
-            self.custom_tolerances = {}
-        # reasonable defaults; override per-case as needed
-        self.custom_tolerances.setdefault(torch.float32, Tolerance())
-        self.custom_tolerances.setdefault(torch.bfloat16, Tolerance(atol=1e-3, rtol=1e-2, max_error_rate=0.01))
-        self.custom_tolerances.setdefault(torch.float16, Tolerance(atol=1e-4, rtol=1e-3, max_error_rate=0.01))
 
     @property
     def optimizer_name(self) -> str:
@@ -210,7 +239,7 @@ def default_variants(base: OptTest) -> list[OptTest]:
         skip_tests=list(base.skip_tests),
         any_precision=base.any_precision,
         custom_iterations=base.custom_iterations,
-        custom_tolerances=base.custom_tolerances,
+        spec=base.spec,
         only_dtypes=base.only_dtypes,
         fully_decoupled_reference=base.fully_decoupled_reference,
     )
