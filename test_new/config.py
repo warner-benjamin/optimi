@@ -13,6 +13,9 @@ from optimi.optimizer import OptimiOptimizer
 from torch.optim import Optimizer
 
 
+from optimi.utils import MIN_TORCH_2_6
+
+
 class OptTestType(Enum):
     normal = "normal"
     gradient_release = "gradient_release"
@@ -23,11 +26,38 @@ class DeviceType(Enum):
     cpu = "cpu"
     gpu = "gpu"
 
+    def is_available(self) -> bool:
+        if self == DeviceType.cpu:
+            return True
+        if self == DeviceType.gpu:
+            return (
+                torch.cuda.is_available()
+                or (hasattr(torch, "xpu") and torch.xpu.is_available())
+                or (hasattr(torch.backends, "mps") and torch.backends.mps.is_available())
+            )
+        return False
+
 
 class Backend(Enum):
     torch = "torch"
     triton = "triton"
     foreach = "foreach"
+
+    def is_supported(self, device: DeviceType) -> bool:
+        if self == Backend.triton:
+            # Triton requires torch >= 2.6
+            if not MIN_TORCH_2_6:
+                return False
+            # Triton not supported on CPU
+            if device == DeviceType.cpu:
+                return False
+            # Triton not supported on MPS
+            if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+                return False
+            # Triton requires GPU/XPU
+            if not (torch.cuda.is_available() or (hasattr(torch, "xpu") and torch.xpu.is_available())):
+                return False
+        return True
 
 
 @dataclass
@@ -221,6 +251,8 @@ class OptTest:
 
     def supports_l2_weight_decay(self) -> bool:
         return "decouple_wd" in inspect.signature(self.optimi_class.__init__).parameters
+
+
 
 
 def default_variants(base: OptTest) -> list[OptTest]:

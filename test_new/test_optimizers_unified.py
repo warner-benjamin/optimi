@@ -1,7 +1,7 @@
 import pytest
 import torch
 from _pytest.mark.structures import ParameterSet
-from optimi.utils import MIN_TORCH_2_6
+
 
 from .config import Backend, DeviceType, OptTest, OptTestType, discover_tests
 from .runner import run_test
@@ -41,47 +41,27 @@ SUBSET_DIMS = [
 
 
 def _should_skip(test_type: OptTestType, opttest: OptTest, device_type: DeviceType, dtype: torch.dtype, backend: Backend) -> bool:
-    # Explicit per-opttest skip
+    # 1. Hardware availability
+    if not device_type.is_available():
+        return True
+
+    # 2. Backend support for hardware
+    if not backend.is_supported(device_type):
+        return True
+
+    # 3. Explicit per-opttest skip
     if test_type in set(opttest.skip_tests):
         return True
 
-    # Respect per-test dtype constraints if provided
+    # 4. Respect per-test dtype constraints if provided
     if opttest.only_dtypes and dtype not in opttest.only_dtypes:
         return True
 
-    # Skip triton on CPU
-    if backend == Backend.triton and device_type == DeviceType.cpu:
-        return True
-
-    # Triton requires torch >= 2.6
-    if backend == Backend.triton and not MIN_TORCH_2_6:
-        return True
-
-    # Triton is not supported on MPS
-    if (
-        backend == Backend.triton
-        and not (torch.cuda.is_available() or (hasattr(torch, "xpu") and torch.xpu.is_available()))
-        and (hasattr(torch.backends, "mps") and torch.backends.mps.is_available())
-    ):
-        return True
-
-    # GPU availability
-    if device_type == DeviceType.gpu and not (
-        torch.cuda.is_available()
-        or (hasattr(torch, "xpu") and torch.xpu.is_available())
-        or (hasattr(torch.backends, "mps") and torch.backends.mps.is_available())
-    ):
-        return True
-
-    # Gradient release and accumulation are GPU-only tests
+    # 5. Gradient release and accumulation are GPU-only tests
     if test_type in (OptTestType.gradient_release, OptTestType.accumulation) and device_type == DeviceType.cpu:
         return True
 
-    # Gradient release / accumulation are incompatible with foreach
-    if test_type in (OptTestType.gradient_release, OptTestType.accumulation) and backend == Backend.foreach:
-        return True
-
-    # bfloat16 is not supported on MPS
+    # 6. bfloat16 is not supported on MPS
     if (
         device_type == DeviceType.gpu
         and dtype == torch.bfloat16
@@ -90,8 +70,12 @@ def _should_skip(test_type: OptTestType, opttest: OptTest, device_type: DeviceTy
     ):
         return True
 
-    # Skip bfloat16 on CPU for most optimizers; allow anyadam exception via opttest.any_precision
+    # 7. Skip bfloat16 on CPU for most optimizers; allow anyadam exception via opttest.any_precision
     if device_type == DeviceType.cpu and dtype == torch.bfloat16 and not opttest.any_precision:
+        return True
+
+    # 8. Skip foreach for gradient release and accumulation tests
+    if test_type != OptTestType.normal and backend == Backend.foreach:
         return True
 
     return False
