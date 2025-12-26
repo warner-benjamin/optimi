@@ -3,6 +3,7 @@ on:
   workflow_call:
   workflow_dispatch:
   push:
+    branches: [ main ]
     paths: [ 'optimi/**', 'tests/**' ]
   pull_request:
     paths: [ 'optimi/**', 'tests/**' ]
@@ -12,16 +13,16 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        python-version: ['3.10', '3.11', '3.12', '3.13']
+        python-version: ['3.10', '3.11', '3.12', '3.13', '3.14']
 
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
 
       - name: Install Python and uv with caching
-        uses: astral-sh/setup-uv@v6
+        uses: astral-sh/setup-uv@v7
         with:
-          version: ">=0.8.3,<0.9.0"
+          version: ">=0.9.18,<0.10.0"
           python-version: ${{ matrix.python-version }}
           enable-cache: true
           cache-dependency-glob: "pyproject.toml"
