@@ -131,7 +131,7 @@ def with_updated_spec(
 ) -> TestSpec:
     if isinstance(spec, (NormalSpec, GradientReleaseSpec, AccumulationSpec)):
         if isinstance(spec, NormalSpec):
-            base = TestSpec(default=spec)
+            base = TestSpec(normal=spec)
         elif isinstance(spec, GradientReleaseSpec):
             base = TestSpec(gradient_release=spec)
         else:
@@ -149,9 +149,11 @@ def with_updated_spec(
         merged = {**base.normal.tolerance, **tolerances_override}
         return replace(base, normal=replace(base.normal, tolerance=merged))
     if test_type == OptTestType.gradient_release:
-        return replace(base, gradient_release=replace(base.gradient_release, **tolerances_override))
+        merged = {**base.gradient_release.tolerance, **tolerances_override}
+        return replace(base, gradient_release=replace(base.gradient_release, tolerance=merged))
     if test_type == OptTestType.accumulation:
-        return replace(base, accumulation=replace(base.accumulation, **tolerances_override))
+        merged = {**base.accumulation.tolerance, **tolerances_override}
+        return replace(base, accumulation=replace(base.accumulation, tolerance=merged))
     raise ValueError(f"Unknown test type: {test_type}")
 
 
