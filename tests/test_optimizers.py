@@ -24,13 +24,15 @@ BACKEND_PARAMS = [
 OPTIMIZERS = [pytest.param(c, id=c.name, marks=getattr(pytest.mark, c.optimizer_name)) for c in discover_tests()]
 
 # Full dimensions: CPU -> (64,64), (64,128); GPU -> (256,256), (256,512), (256,1024), (256,2048)
-FULL_DIMS = [
-    pytest.param((DeviceType.cpu, (64, 64)), id="cpu-64x64"),
-    pytest.param((DeviceType.cpu, (64, 128)), id="cpu-64x128"),
-    pytest.param((DeviceType.gpu, (256, 256)), id="gpu-256x256"),
-    pytest.param((DeviceType.gpu, (256, 512)), id="gpu-256x512"),
-    pytest.param((DeviceType.gpu, (256, 1024)), id="gpu-256x1024"),
-    pytest.param((DeviceType.gpu, (256, 2048)), id="gpu-256x2048"),
+CPU_DIMS = [
+    pytest.param((64, 64), id="cpu-64x64"),
+    pytest.param((64, 128), id="cpu-64x128"),
+]
+GPU_FULL_DIMS = [
+    pytest.param((256, 256), id="gpu-256x256"),
+    pytest.param((256, 512), id="gpu-256x512"),
+    pytest.param((256, 1024), id="gpu-256x1024"),
+    pytest.param((256, 2048), id="gpu-256x2048"),
 ]
 
 # Gradient release and accumulation dims: (128,256) and (128,1024)
@@ -93,7 +95,6 @@ def _build_params(test_type: OptTestType) -> list[ParameterSet]:
     if test_type == OptTestType.normal:
         device_params = DEVICE_PARAMS
         dtype_params = DTYPE_PARAMS
-        dims_params = FULL_DIMS
     else:
         device_params = [pytest.param(DeviceType.gpu, marks=pytest.mark.gpu, id=DeviceType.gpu.value)]
         dtype_params = [pytest.param(torch.float32, marks=pytest.mark.float32, id="float32")]
@@ -102,11 +103,11 @@ def _build_params(test_type: OptTestType) -> list[ParameterSet]:
     params: list[ParameterSet] = []
     for opt_param in OPTIMIZERS:
         for device_param in device_params:
+            if test_type == OptTestType.normal:
+                dims_params = GPU_FULL_DIMS if _param_value(device_param) == DeviceType.gpu else CPU_DIMS
             for dtype_param in dtype_params:
                 for backend_param in BACKEND_PARAMS:
                     for dims_param in dims_params:
-                        if test_type == OptTestType.normal and _param_value(dims_param)[0] != _param_value(device_param):
-                            continue
                         if _should_skip(
                             test_type,
                             _param_value(opt_param),
@@ -138,18 +139,23 @@ def _build_params(test_type: OptTestType) -> list[ParameterSet]:
     return params
 
 
-@pytest.mark.parametrize("opttest, device_type, dtype, backend, dims_spec", _build_params(OptTestType.normal))
-def test_normal(opttest, device_type, dtype, backend, dims_spec, gpu_device):
-    _, dims = dims_spec
-    device = torch.device(gpu_device if device_type == DeviceType.gpu else "cpu")
-    run_test(opttest, device, dtype, backend, OptTestType.normal, dims=dims)
+def _get_device(device_type: DeviceType, request: pytest.FixtureRequest) -> torch.device:
+    if device_type == DeviceType.gpu:
+        return torch.device(request.getfixturevalue("gpu_device"))
+    else:
+        return torch.device("cpu")
+
+
+@pytest.mark.parametrize("opttest, device_type, dtype, backend, dims", _build_params(OptTestType.normal))
+def test_normal(opttest, device_type, dtype, backend, dims, request):
+    run_test(opttest, _get_device(device_type, request), dtype, backend, OptTestType.normal, dims=dims)
 
 
 @pytest.mark.parametrize("opttest, device_type, dtype, backend, dims", _build_params(OptTestType.gradient_release))
-def test_gradient_release(opttest, device_type, dtype, backend, dims, gpu_device):
-    run_test(opttest, torch.device(gpu_device), dtype, backend, OptTestType.gradient_release, dims=dims)
+def test_gradient_release(opttest, device_type, dtype, backend, dims, request):
+    run_test(opttest, _get_device(device_type, request), dtype, backend, OptTestType.gradient_release, dims=dims)
 
 
 @pytest.mark.parametrize("opttest, device_type, dtype, backend, dims", _build_params(OptTestType.accumulation))
-def test_accumulation(opttest, device_type, dtype, backend, dims, gpu_device):
-    run_test(opttest, torch.device(gpu_device), dtype, backend, OptTestType.accumulation, dims=dims)
+def test_accumulation(opttest, device_type, dtype, backend, dims, request):
+    run_test(opttest, _get_device(device_type, request), dtype, backend, OptTestType.accumulation, dims=dims)

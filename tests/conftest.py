@@ -55,7 +55,7 @@ def gpu_device(worker_id, request):
         backend = "mps"
         device_count = 0
     else:
-        raise RuntimeError("No GPU backend available")
+        pytest.skip("No GPU backend available")
 
     if specific_gpu is not None:
         return torch.device(f"{backend}:{specific_gpu}")
