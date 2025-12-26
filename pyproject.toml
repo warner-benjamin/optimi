@@ -6,7 +6,7 @@ readme = "README.md"
 requires-python = ">=3.10"
 license = { file = "LICENSE" }
 keywords = ["Optimizers", "PyTorch", "Deep Learning", "AI"]
-version = "0.3.2"
+version = "0.3.3"
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
@@ -15,6 +15,7 @@ classifiers = [
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
 dependencies = ["torch>=2.2"]
@@ -24,29 +25,30 @@ cpu = ["torch>=2.2"]
 cu121 = ["torch>=2.2,<2.6"]
 cu124 = ["torch>=2.4"]
 cu128 = ["torch>=2.7"]
+cu130 = ["torch>=2.9"]
 rocm = ["torch>=2.7", "pytorch-triton-rocm>=3.3.0"]
 xpu = ["torch>=2.7.1", "pytorch-triton-xpu>=3.3.0"]
 
 test = [
-    "pytest>=8.4.0",
-    "pytest-xdist>=3.7.0",
-    "ruff>=0.11.13",
+    "pytest>=9.0.2",
+    "pytest-xdist>=3.8.0",
+    "ruff>=0.14.10",
     "pytest-md>=0.2.0",
-    "numpy>=1.23",
+    "numpy>=1.23.0",
 ]
 docs = [
-    "mkdocs-material>=9.6.14",
-    "mkdocstrings>=0.29.1",
-    "mkdocstrings-python>=1.16.12",
-    "black>=25.1.0",
+    "mkdocs-material>=9.7.1",
+    "mkdocstrings>=1.0.0",
+    "mkdocstrings-python>=2.0.1",
+    "black>=25.12.0",
     "mkdocs-caption>=1.3.0",
 ]
 dev = [{ include-group = "test" }, { include-group = "docs" }]
 bench = [
-    "accelerate>=1.8.1",
-    "torch>=2.7",
-    "transformers>=4.53.0",
-    "typer>=0.16",
+    "accelerate>=1.12.0",
+    "torch>=2.7.0",
+    "transformers>=4.57.3",
+    "typer>=0.21.0",
 ]
 all = [{ include-group = "dev" }, { include-group = "bench" }]
 
@@ -105,6 +107,7 @@ conflicts = [
     { group = "cu121" },
     { group = "cu124" },
     { group = "cu128" },
+    { group = "cu130" },
     { group = "rocm" },
     { group = "xpu" },
   ],
@@ -122,6 +125,7 @@ torch = [
   { index = "pytorch-cu121", group = "cu121" },
   { index = "pytorch-cu124", group = "cu124" },
   { index = "pytorch-cu128", group = "cu128" },
+  { index = "pytorch-cu130", group = "cu130" },
   { index = "pytorch-rocm", group = "rocm" },
   { index = "pytorch-xpu", group = "xpu" },
 ]
@@ -150,6 +154,11 @@ explicit = true
 [[tool.uv.index]]
 name = "pytorch-cu128"
 url = "https://download.pytorch.org/whl/cu128"
+explicit = true
+
+[[tool.uv.index]]
+name = "pytorch-cu130"
+url = "https://download.pytorch.org/whl/cu130"
 explicit = true
 
 [[tool.uv.index]]
