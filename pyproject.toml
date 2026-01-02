@@ -80,6 +80,7 @@ markers = [
 ]
 filterwarnings = [
     "ignore:Parameter `foreach` is deprecated:DeprecationWarning",
+    "ignore:LaProp does not accept foreach; ignoring BaseParams.foreach=True\\.:RuntimeWarning",
 ]
 
 [tool.ruff]

@@ -229,7 +229,7 @@ def run_test(
                 rtol=tolerance.rtol,
                 max_error_count=max_error_count,
                 max_error_rate=max_error_rate,
-                name="fc1: ",
+                name="PyTorch-Optimi fc1: ",
             )
             assert_most_approx_close(
                 m1.fc2.weight,
@@ -238,7 +238,7 @@ def run_test(
                 rtol=tolerance.rtol,
                 max_error_count=max_error_count,
                 max_error_rate=max_error_rate,
-                name="fc2: ",
+                name="PyTorch-Optimi fc2: ",
             )
 
             if i % max(1, iterations // 10) == 0 and i > 0:
@@ -257,7 +257,7 @@ def run_test(
                     rtol=tolerance.rtol,
                     max_error_count=max_error_count,
                     max_error_rate=max_error_rate,
-                    name="fc1 after load: ",
+                    name="PyTorch-Optimi after load fc1: ",
                 )
                 assert_most_approx_close(
                     m1.fc2.weight,
@@ -266,7 +266,7 @@ def run_test(
                     rtol=tolerance.rtol,
                     max_error_count=max_error_count,
                     max_error_rate=max_error_rate,
-                    name="fc2 after load: ",
+                    name="PyTorch-Optimi after load fc2: ",
                 )
         elif test_type == OptTestType.gradient_release:
             assert_most_approx_close(
@@ -276,7 +276,7 @@ def run_test(
                 atol=tolerance.atol,
                 max_error_count=max_error_count,
                 max_error_rate=max_error_rate,
-                name="PyTorch-PyTorch: ",
+                name="PyTorch-PyTorch GradRel fc1: ",
             )
             assert_most_approx_close(
                 m1.fc2.weight,
@@ -285,7 +285,7 @@ def run_test(
                 atol=tolerance.atol,
                 max_error_count=max_error_count,
                 max_error_rate=max_error_rate,
-                name="PyTorch-PyTorch: ",
+                name="PyTorch-PyTorch GradRel fc2: ",
             )
             assert_most_approx_close(
                 m1.fc1.weight,
@@ -294,7 +294,7 @@ def run_test(
                 atol=tolerance.atol,
                 max_error_count=max_error_count,
                 max_error_rate=max_error_rate,
-                name="PyTorch-Optimi: ",
+                name="PyTorch-Optimi fc1: ",
             )
             assert_most_approx_close(
                 m1.fc2.weight,
@@ -303,7 +303,7 @@ def run_test(
                 atol=tolerance.atol,
                 max_error_count=max_error_count,
                 max_error_rate=max_error_rate,
-                name="PyTorch-Optimi: ",
+                name="PyTorch-Optimi fc2: ",
             )
 
     if test_type == OptTestType.accumulation:
@@ -314,6 +314,7 @@ def run_test(
             atol=tolerance.atol,
             max_error_count=max_error_count,
             max_error_rate=max_error_rate,
+            name="PyTorch-Optimi fc1: ",
         )
         assert_most_approx_close(
             m1.fc2.weight,
@@ -322,6 +323,7 @@ def run_test(
             atol=tolerance.atol,
             max_error_count=max_error_count,
             max_error_rate=max_error_rate,
+            name="PyTorch-Optimi fc2: ",
         )
 
     for h in pytorch_hooks:

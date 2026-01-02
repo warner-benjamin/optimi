@@ -4,6 +4,7 @@ from .adam import Adam, adam
 from .adamw import AdamW, adamw
 from .adan import Adan, adan
 from .gradientrelease import prepare_for_gradient_release, remove_gradient_release
+from .laprop import LaProp, laprop
 from .lion import Lion, lion
 from .radam import RAdam, radam
 from .ranger import Ranger, ranger

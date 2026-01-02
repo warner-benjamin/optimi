@@ -175,6 +175,7 @@ class BaseParams:
     weight_decay: float = 0.0
     decouple_wd: bool = False
     decouple_lr: bool = False
+    foreach: bool = False
     triton: bool = False
 
     def with_(self, **overrides: Any) -> "BaseParams":
@@ -188,6 +189,8 @@ class BaseParams:
         values = asdict(self)
         if values.get("triton") and "triton" not in ok:
             warnings.warn(f"{cls.__name__} does not accept triton; ignoring BaseParams.triton=True.", RuntimeWarning)
+        if values.get("foreach") and "foreach" not in ok:
+            warnings.warn(f"{cls.__name__} does not accept foreach; ignoring BaseParams.foreach=True.", RuntimeWarning)
         return {k: v for k, v in values.items() if k in ok}
 
     def to_optimi_kwargs(self, cls: type[OptimiOptimizer]) -> dict[str, Any]:
@@ -232,22 +235,21 @@ class OptTest:
         return self.name.split("_", 1)[1] if "_" in self.name else "base"
 
     def to_optimi_kwargs(self, backend: Backend | None = None) -> dict[str, Any]:
-        kw = self.optimi_params.to_optimi_kwargs(self.optimi_class)
-
         # Centralize backend controls so runners don't mutate kwargs later
         if backend is not None:
             if backend == Backend.triton:
-                kw["triton"] = True
-                kw["foreach"] = False
+                self.optimi_params.triton = True
+                self.optimi_params.foreach = False
             elif backend == Backend.torch:
-                kw["triton"] = False
-                kw["foreach"] = False
+                self.optimi_params.triton = False
+                self.optimi_params.foreach = False
             elif backend == Backend.foreach:
-                kw["triton"] = False
-                kw["foreach"] = True
+                self.optimi_params.triton = False
+                self.optimi_params.foreach = True
             else:
                 raise ValueError(f"Unknown backend: {backend}")
-        return kw
+
+        return self.optimi_params.to_optimi_kwargs(self.optimi_class)
 
     def to_reference_kwargs(self, backend: Backend | None = None) -> dict[str, Any]:
         assert self.reference_params is not None

@@ -23,14 +23,14 @@ class OptimiOptimizer(Optimizer):
             raise ValueError(f"Invalid maximum learning rate: max_lr={defaults['max_lr']}")
 
         if not MIN_TORCH_2_1:
-            if defaults["foreach"]:
+            if defaults.get("foreach", False):
                 raise ValueError(f"foreach={defaults['foreach']} requires PyTorch 2.1 or later. Set foreach=False or upgrade PyTorch.")
             else:
                 defaults["foreach"] = False
             if defaults["gradient_release"]:
                 raise ValueError(f"gradient_release={defaults['gradient_release']} requires PyTorch 2.1 or later. Upgrade PyTorch to use.")
 
-        if defaults["foreach"]:
+        if defaults.get("foreach", False):
             warn(
                 "Parameter `foreach` is deprecated in favor of the faster `triton` implementation and will be removed in a future release."
                 " Set `foreach=False` to silence this warning.",
@@ -63,7 +63,7 @@ class OptimiOptimizer(Optimizer):
 
         # if gradient_release is enabled, disable foreach step so normal optimizer step won't error
         if self.defaults["gradient_release"]:
-            if self.defaults["foreach"]:
+            if self.defaults.get("foreach", False):
                 warn("Gradient release (gradient_release=True) and foreach (foreach=True) cannot be used together. Disabling foreach.", category=UserWarning)  # fmt: skip  # noqa: E501
             self.defaults["foreach"] = False
             for group in self.param_groups:
