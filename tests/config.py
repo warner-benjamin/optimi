@@ -319,10 +319,10 @@ def default_variants(base: OptTest) -> list[OptTest]:
             replace(
                 base_test,
                 name=f"{base.optimizer_name}_decoupled_lr",
-                optimi_params=base.optimi_params.with_(weight_decay=1e-5, decouple_lr=True),
+                optimi_params=base.optimi_params.with_(weight_decay=1e-4, decouple_lr=True),
                 reference_class=ref_cls,
                 reference_params=(base.reference_params or base.optimi_params).with_(
-                    weight_decay=1e-5 if base.fully_decoupled_reference else 0.01,
+                    weight_decay=1e-4 if base.fully_decoupled_reference else 0.01,
                     decouple_lr=True,
                 ),
             )

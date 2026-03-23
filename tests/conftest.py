@@ -19,6 +19,7 @@ def pytest_configure(config):
     # Register dtype marks
     config.addinivalue_line("markers", "float32: mark test to run with float32 dtype")
     config.addinivalue_line("markers", "bfloat16: mark test to run with bfloat16 dtype")
+    config.addinivalue_line("markers", "float16: mark test to run with float16 dtype")
 
     # Register backend marks
     config.addinivalue_line("markers", "torch: mark test to run with torch backend")
