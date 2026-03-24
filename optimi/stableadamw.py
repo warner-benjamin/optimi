@@ -15,14 +15,17 @@
 # lion-pytorch - MIT License - Copyright (c) 2023 Phil Wang - https://github.com/lucidrains/lion-pytorch
 
 from collections.abc import Callable, Iterable
+from functools import partial
 from typing import Any
 
 import torch
 from torch import Tensor
 from torch.utils._foreach_utils import _group_tensors_by_device_and_dtype
 
-from optimi.optimizer import OptimiOptimizer
-from optimi.utils import (
+from .gradientscaling import OptimizerScalingHelper, ScalingInfo
+from .adam import _adam_max_scale_up
+from .optimizer import KAHAN_DTYPES, OptimiOptimizerWithGradientScaling
+from .utils import (
     HAS_TRITON,
     TORCH_TO_TRITON_DTYPE,
     _default_to_triton,
@@ -35,7 +38,7 @@ __all__ = ["StableAdamW", "stableadamw"]
 
 
 # this is required as Optimizer.load_state_dict casts the state to the param's dtype
-def _restore_triton_scratch_state(optim: OptimiOptimizer):
+def _restore_triton_scratch_state(optim: OptimiOptimizerWithGradientScaling):
     "Restore or create scratch to fp32 after potentially cast to low precision by load_state_dict."
     for group in optim.param_groups:
         if group["triton"]:
@@ -47,7 +50,7 @@ def _restore_triton_scratch_state(optim: OptimiOptimizer):
                     state["mean_square"] = torch.zeros(1, dtype=torch.float32, device=p.device)
 
 
-class StableAdamW(OptimiOptimizer):
+class StableAdamW(OptimiOptimizerWithGradientScaling):
     """StableAdamW optimizer. An AdamW-Adafactor hybrid with learning rate update clipping.
 
     Args:
@@ -71,6 +74,12 @@ class StableAdamW(OptimiOptimizer):
         gradient_release: Fuses optimizer step and zero_grad as part of the parameter's backward
             pass. Requires model hooks created with `register_gradient_release`. Incompatible with
             closure (default: False)
+        scale_down_hysteresis: When the optimizer scaling factor is updated downwards, then further
+            divide the scaling factor by this amount. (default: None)
+        scale_up_hysteresis: When the optimizer scaling factor is updated upwards, then further
+            divide the scaling factor by this amount. Upwards rescaling must be triggered manually
+            by setting group["auto_rescale_on_next_iteration"] to True before an optimizer
+            iteration. (default: None)
     """
 
     def __init__(
@@ -86,6 +95,8 @@ class StableAdamW(OptimiOptimizer):
         foreach: bool | None = None,
         triton: bool | None = None,
         gradient_release: bool = False,
+        scale_down_hysteresis: float | None = None,
+        scale_up_hysteresis: float | None = None,
     ):
         if not 0.0 <= betas[0] < 1.0:
             raise ValueError(f"Invalid beta1 parameter: {betas[0]=}")
@@ -107,6 +118,7 @@ class StableAdamW(OptimiOptimizer):
             triton=triton,
             gradient_release=gradient_release,
             setup=False,
+            **self._gradient_scaling_init_arguments(scale_down_hysteresis=scale_down_hysteresis, scale_up_hysteresis=scale_up_hysteresis),
         )
         super().__init__(params, defaults)
 
@@ -118,7 +130,7 @@ class StableAdamW(OptimiOptimizer):
             state["exp_avg_sq"] = torch.zeros_like(param, memory_format=torch.preserve_format)
             state["eps_sq"] = torch.tensor(group["eps"] ** 2, dtype=param.dtype, device=param.device)
 
-            if (group["kahan_sum"] or group["kahan_sum"] is None) and param.dtype in [torch.float16, torch.bfloat16]:
+            if (group["kahan_sum"] or group["kahan_sum"] is None) and param.dtype in KAHAN_DTYPES:
                 state["kahan_comp"] = torch.zeros_like(param, memory_format=torch.preserve_format)
                 group["kahan_sum"] = True
             elif group["triton"]:
@@ -145,6 +157,7 @@ class StableAdamW(OptimiOptimizer):
     ):
         if not group["setup"]:
             group["setup"] = True
+            self._gradient_scaling_init_group(group)
             group["step"] = torch.tensor(0, dtype=torch.int32)
 
             if group["triton"] is None and group["foreach"] is None:
@@ -184,6 +197,10 @@ class StableAdamW(OptimiOptimizer):
             with torch.enable_grad():
                 loss = closure()
 
+        scaling_pre = self._gradient_scaling_make_partial_info()
+        if scaling_pre is False:
+            return loss  # skip because found_inf
+
         if param is None:
             for group in self.param_groups:
                 params, grads, exp_avgs, exp_avg_sqs, eps_sqs, kahan_comps, mean_squares = [], [], [], [], [], [], []
@@ -219,6 +236,7 @@ class StableAdamW(OptimiOptimizer):
                     gradient_release=False,
                     optimizer_accumulation=False,
                     mean_squares=mean_squares,
+                    scaling=self._gradient_scaling_group_info(group, scaling_pre),
                 )
         else:
             state = self.state[param]
@@ -247,6 +265,7 @@ class StableAdamW(OptimiOptimizer):
                     gradient_release=True,
                     optimizer_accumulation=self._optimizer_accumulation,
                     mean_squares=state["mean_square"],
+                    scaling=self._gradient_scaling_group_info(group, scaling_pre),
                 )
             else:
                 stableadamw(
@@ -269,6 +288,7 @@ class StableAdamW(OptimiOptimizer):
                     triton=False,
                     gradient_release=True,
                     optimizer_accumulation=self._optimizer_accumulation,
+                    scaling=self._gradient_scaling_group_info(group, scaling_pre),
                 )
 
         return loss
@@ -296,6 +316,7 @@ def stableadamw(
     gradient_release: bool = False,
     optimizer_accumulation: bool = False,
     mean_squares: list[Tensor] | None = None,
+    scaling: ScalingInfo | None = None,
 ):
     """Functional API to apply a StableAdamW optimization step.
 
@@ -322,7 +343,24 @@ def stableadamw(
         gradient_release: Fuses optimizer step as part of the parameter's backward pass
         optimizer_accumulation: Accumulate gradients into state during gradient release step
         mean_squares: RMS calculation scratch tensor for triton kernel
+        scaling: Gradient scaling information
     """
+
+    rescale_factor = None
+    rescale_factor_sqr = None
+
+    if scaling:
+        scaler = OptimizerScalingHelper(scaling_info=scaling)
+        # The state variables are the same as for adam
+        scaler.get_max_optimizer_state_scale_up_factor = partial(_adam_max_scale_up, exp_avgs=exp_avgs, exp_avg_sqs=exp_avg_sqs)
+        scaler.update()
+        grad_to_opt_scale = scaler.gradient_to_optimizer_scale
+        rescale_factor = scaler.rescale_factor
+        if rescale_factor is not None:
+            rescale_factor_sqr = rescale_factor * rescale_factor
+    else:
+        grad_to_opt_scale = None
+
     # calculate debiased beta hat & complement terms
     step.add_(1)
     step_int = step.item()
@@ -330,6 +368,22 @@ def stableadamw(
     beta1_comp = 1 - beta1_hat
     beta2_hat = debias_beta(beta2, step_int)
     beta2_comp = 1 - beta2_hat
+
+    if grad_to_opt_scale is not None:
+        if foreach:
+            raise ValueError(f"Gradient scaling and {foreach=} cannot be used together")
+
+        # Scale the variables to prevent both overflow and underflow.
+        beta1_comp *= grad_to_opt_scale
+        beta2_comp *= grad_to_opt_scale * grad_to_opt_scale / scaler.optimizer_max
+        eps = eps * scaler.optimizer_scale
+        eps_sq = eps * eps / scaler.optimizer_max
+        scale_rms = scaler.optimizer_max**0.5
+        scale_grad_for_rms = grad_to_opt_scale / scale_rms
+    else:
+        eps_sq = eps * eps
+        scale_rms = None
+        scale_grad_for_rms = None
 
     if kahan_comps is None:
         kahan_comps = [None] * len(params)
@@ -363,11 +417,16 @@ def stableadamw(
         beta2_comp=beta2_comp,
         weight_decay=weight_decay,
         eps=eps,
+        eps_sq_float=eps_sq,
         decouple_lr=decouple_lr,
         max_lr=max_lr,
         kahan_sum=kahan_sum,
         update_parameters=(not optimizer_accumulation),
         mean_squares=mean_squares,
+        scale_rms=scale_rms,
+        scale_grad_for_rms=scale_grad_for_rms,
+        rescale_factor=rescale_factor,
+        rescale_factor_sqr=rescale_factor_sqr,
     )
 
 
@@ -434,6 +493,7 @@ def _single_param_stableadamw(
     eps: float,
     decouple_lr: bool,
     max_lr: float | None,
+    scale_rms: float | None = None,
     kahan_sum: bool = False,
     update_parameters: bool = True,
     **kwargs,
@@ -443,6 +503,11 @@ def _single_param_stableadamw(
     exp_avg_sq.mul_(beta2_hat).addcmul_(grad, grad, value=beta2_comp)
 
     if update_parameters:
+        denom = exp_avg_sq.sqrt()
+        if scale_rms is not None:
+            denom.mul_(scale_rms)
+        denom.add_(eps)
+
         # compute per tensor RMS stabilization term
         rms = grad.pow(2).div_(exp_avg_sq.maximum(eps_sq)).mean().sqrt()
 
@@ -457,7 +522,7 @@ def _single_param_stableadamw(
                 weight_decay = 1 - lr * weight_decay
             param.mul_(weight_decay)
 
-        if kahan_sum and param.dtype in [torch.float16, torch.bfloat16]:
+        if kahan_sum and param.dtype in KAHAN_DTYPES:
             # Adam step
             kahan_comp.addcdiv_(exp_avg, exp_avg_sq.sqrt().add_(eps), value=-lr)
 
@@ -493,7 +558,7 @@ def _foreach_stableadamw(
 ):
     grouped_tensors = _group_tensors_by_device_and_dtype([params, grads, exp_avgs, exp_avg_sqs, eps_sqs, kahan_comps])
     for (_, dtype), ((dev_params, dev_grads, dev_exp_avgs, dev_exp_avg_sqs, dev_eps_sqs, dev_kahan_comps), _) in grouped_tensors.items():
-        do_kahan_sum = kahan_sum and dtype in [torch.float16, torch.bfloat16]
+        do_kahan_sum = kahan_sum and dtype in KAHAN_DTYPES
 
         # update gradient moving averages with debiased betas
         torch._foreach_lerp_(dev_exp_avgs, dev_grads, weight=beta1_comp)
@@ -555,11 +620,17 @@ if HAS_TRITON:
         exp_avg_sq_ptr,
         mean_square_ptr,
         eps,
+        eps_sq,
         beta1_hat,
         beta1_comp,
         beta2_hat,
         beta2_comp,
+        scale_grad_for_rms,  # used with do_scale
+        rescale_factor,  # used with do_rescale
+        rescale_factor_sqr,  # used with do_rescale
         n_elements,
+        do_rescale: tl.constexpr,
+        do_scale: tl.constexpr,
         update_parameters: tl.constexpr,
         BLOCK_SIZE: tl.constexpr,
         param_dtype: tl.constexpr = tl.float32,
@@ -575,13 +646,22 @@ if HAS_TRITON:
         exp_avg = tl.load(exp_avg_ptr + offsets, mask=mask).to(tl.float32)
         exp_avg_sq = tl.load(exp_avg_sq_ptr + offsets, mask=mask).to(tl.float32)
 
+        if do_rescale:
+            # in-place rescale
+            exp_avg *= rescale_factor
+            exp_avg_sq *= rescale_factor_sqr
+
         exp_avg = tl.fma(exp_avg, beta1_hat, beta1_comp * grad)
         exp_avg_sq = tl.fma(exp_avg_sq, beta2_hat, beta2_comp * grad * grad)
 
         # partial calculation of per-element stabilisation term
         if update_parameters:
-            square = tl.where(mask, (grad * grad) / tl.maximum(exp_avg_sq, eps * eps), 0.0)
+            # We don't need to worry about underflow or underflow here because all the variables below are float32.
+            square = tl.where(mask, (grad * grad) / tl.maximum(exp_avg_sq, eps_sq), 0.0)
             block_sum = tl.sum(square, axis=0, dtype=tl.float32) / n_elements
+            if do_scale:
+                block_sum *= scale_grad_for_rms * scale_grad_for_rms
+
             # in testing, this atomic_add was faster then storing the results in
             # a temporary buffer then summing in PyTorch or another Triton kernel
             tl.atomic_add(mean_square_ptr, block_sum)
@@ -601,6 +681,8 @@ if HAS_TRITON:
         weight_decay,
         eps,
         max_lr,
+        scale_rms,  # used with do_scale
+        do_scale: tl.constexpr,
         do_weight_decay: tl.constexpr,
         kahan_sum: tl.constexpr,
         decouple_lr: tl.constexpr,
@@ -621,22 +703,32 @@ if HAS_TRITON:
 
         # RMS stabilized learning rate
         mean_square = tl.load(mean_square_ptr)
-        lr = lr / tl.maximum(1.0, tl.sqrt(mean_square))
+        lr = lr / tl.maximum(1.0, tl.sqrt(mean_square))  # TODO: move this out of the kernel
 
-        # decoupled weight decay or fully decoupled weight decay
+        rms = tl.sqrt(exp_avg_sq)
+        if do_scale:
+            rms *= scale_rms
+
         if do_weight_decay:
             if decouple_lr:
-                weight_decay = 1.0 - (lr / max_lr) * weight_decay
+                weight_decay = (lr / max_lr) * weight_decay
             else:
-                weight_decay = 1.0 - lr * weight_decay
-            param = tl.cast(param * weight_decay, param.dtype)
+                weight_decay = lr * weight_decay
+
+        # AdamW update
+        delta = -(lr * exp_avg / (rms + eps))
 
         if kahan_sum:
             # load kahan compensation, casting to fp32
             kahan_comp = tl.load(kahan_ptr + offsets, mask=mask).to(tl.float32)
 
+            # decoupled weight decay or fully decoupled weight decay
+            if do_weight_decay:
+                kahan_comp *= 1.0 - weight_decay
+                kahan_comp -= param * weight_decay
+
             # AdamW step, using the kahan comp instead of param
-            kahan_comp = kahan_comp - (lr * exp_avg / (tl.sqrt(exp_avg_sq) + eps))
+            kahan_comp = kahan_comp + delta
 
             # update weights with downcasted kahan update
             prev_param = param
@@ -648,8 +740,11 @@ if HAS_TRITON:
             # store kahan compensation
             tl.store(kahan_ptr + offsets, tl.cast(kahan_comp, param.dtype), mask=mask)
         else:
+            if do_weight_decay:
+                delta -= param * weight_decay
+
             # Standard AdamW step, optionally downcasting to param.dtype from fp32 intermediates
-            param = param + tl.cast((-lr * exp_avg / (tl.sqrt(exp_avg_sq) + eps)), param.dtype)
+            param = param + tl.cast(delta, param.dtype)
 
         # Store updated parameters
         tl.store(param_ptr + offsets, param, mask=mask)
@@ -670,11 +765,18 @@ if HAS_TRITON:
         beta2_comp: float,
         weight_decay: float,
         eps: float,
+        eps_sq_float: float,
         decouple_lr: bool,
         max_lr: float | None = None,
         kahan_sum: bool = False,
+        scale_rms: float | None = None,
+        scale_grad_for_rms: float | None = None,
+        rescale_factor: float | None = None,
+        rescale_factor_sqr: float | None = None,
         **kwargs,
     ):
+        do_scale = scale_rms is not None
+
         for i, param in enumerate(params):
             grad = grads[i]
             exp_avg = exp_avgs[i]
@@ -695,11 +797,17 @@ if HAS_TRITON:
                     exp_avg_sq_ptr=exp_avg_sq,
                     mean_square_ptr=mean_square,
                     eps=eps,
+                    eps_sq=eps_sq_float,
                     beta1_hat=beta1_hat,
                     beta1_comp=beta1_comp,
                     beta2_hat=beta2_hat,
                     beta2_comp=beta2_comp,
                     update_parameters=True,
+                    do_scale=do_scale,
+                    do_rescale=rescale_factor is not None,
+                    rescale_factor=rescale_factor,
+                    rescale_factor_sqr=rescale_factor_sqr,
+                    scale_grad_for_rms=scale_grad_for_rms,
                     n_elements=n_elements,
                     BLOCK_SIZE=block_size,
                     param_dtype=TORCH_TO_TRITON_DTYPE[param.dtype],
@@ -715,8 +823,10 @@ if HAS_TRITON:
                     weight_decay=weight_decay,
                     eps=eps,
                     max_lr=max_lr,
+                    do_scale=do_scale,
+                    scale_rms=scale_rms,
                     do_weight_decay=weight_decay != 0.0,
-                    kahan_sum=kahan_sum and param.dtype in [torch.float16, torch.bfloat16],
+                    kahan_sum=kahan_sum and param.dtype in KAHAN_DTYPES,
                     decouple_lr=decouple_lr,
                     n_elements=n_elements,
                     BLOCK_SIZE=block_size,
@@ -740,12 +850,19 @@ if HAS_TRITON:
         beta2_comp: float,
         weight_decay: float,
         eps: float,
+        eps_sq_float: float,
         decouple_lr: bool,
         max_lr: float | None = None,
         kahan_sum: bool = False,
         update_parameters: bool = True,
+        scale_rms: float | None = None,
+        scale_grad_for_rms: float | None = None,
+        rescale_factor: float | None = None,
+        rescale_factor_sqr: float | None = None,
         **kwargs,
     ):
+        do_scale = scale_rms is not None
+
         n_elements = param.numel()
         block_size = _get_triton_block_size(n_elements)
 
@@ -760,11 +877,17 @@ if HAS_TRITON:
                 exp_avg_sq_ptr=exp_avg_sq,
                 mean_square_ptr=mean_squares,
                 eps=eps,
+                eps_sq=eps_sq_float,
                 beta1_hat=beta1_hat,
                 beta1_comp=beta1_comp,
                 beta2_hat=beta2_hat,
                 beta2_comp=beta2_comp,
                 update_parameters=update_parameters,
+                do_scale=do_scale,
+                do_rescale=rescale_factor is not None,
+                rescale_factor=rescale_factor,
+                rescale_factor_sqr=rescale_factor_sqr,
+                scale_grad_for_rms=scale_grad_for_rms,
                 n_elements=n_elements,
                 BLOCK_SIZE=block_size,
                 param_dtype=TORCH_TO_TRITON_DTYPE[param.dtype],
@@ -782,9 +905,11 @@ if HAS_TRITON:
                     eps=eps,
                     max_lr=max_lr,
                     do_weight_decay=weight_decay != 0.0,
-                    kahan_sum=kahan_sum and param.dtype in [torch.float16, torch.bfloat16],
+                    kahan_sum=kahan_sum and param.dtype in KAHAN_DTYPES,
                     decouple_lr=decouple_lr,
                     n_elements=n_elements,
+                    do_scale=do_scale,
+                    scale_rms=scale_rms,
                     BLOCK_SIZE=block_size,
                 )
                 # reset mean_square scratch for next iteration

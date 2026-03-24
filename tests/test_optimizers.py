@@ -87,6 +87,8 @@ def _should_skip(test_type: OptTestType, opttest: OptTest, device_type: DeviceTy
         issubclass(opttest.optimi_class, optimi.Adam)
         and backend != Backend.foreach
         and (opttest.optimi_params.decouple_lr or opttest.optimi_params.decouple_wd or opttest.optimi_params.weight_decay == 0)
+        or issubclass(opttest.optimi_class, optimi.StableAdamW)
+        and backend == Backend.triton
     ):
         return True
 

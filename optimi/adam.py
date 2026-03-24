@@ -145,9 +145,7 @@ class Adam(OptimiOptimizerWithGradientScaling):
 
         if not group["setup"]:
             group["setup"] = True
-            if group["optimizer_state_scale"] is not None:
-                group["optimizer_state_scale"] = torch.tensor(group["optimizer_state_scale"], dtype=torch.float32)
-
+            self._gradient_scaling_init_group(group)
             group["step"] = torch.tensor(0, dtype=torch.int32)
 
             if group["triton"] is None and group["foreach"] is None:
@@ -318,9 +316,9 @@ def adam(
 
         # Scale the variables to prevent both overflow and underflow.
         beta1_comp *= grad_to_opt_scale
-        beta2_comp *= grad_to_opt_scale**2 / scaler.optimizer_max
+        beta2_comp *= grad_to_opt_scale * grad_to_opt_scale / scaler.optimizer_max
         eps = eps * scaler.optimizer_scale
-        rms_scale = scaler.optimizer_max**0.5
+        scale_rms = scaler.optimizer_max**0.5
         if weight_decay != 0 and not (decouple_wd or decouple_lr):
             # This type of weight decay adds a grad*weight_decay term directly onto the gradients. This can
             # overflow the gradients or the variables used to store their moving averages. There is no safe way
@@ -329,7 +327,7 @@ def adam(
             # weight_decay *= scaling.gradient_scale
             raise ValueError(f"Gradient scaling and L2 weight decay {decouple_wd or decouple_lr=} cannot be used together")
     else:
-        rms_scale = None
+        scale_rms = None
 
     if gradient_release:
         if triton:
@@ -363,7 +361,7 @@ def adam(
         decouple_wd=(decouple_wd or decouple_lr),
         kahan_sum=kahan_sum,
         update_parameters=(not optimizer_accumulation),
-        rms_scale=rms_scale,
+        scale_rms=scale_rms,
         rescale_factor=rescale_factor,
         rescale_factor_sqr=rescale_factor_sqr,
     )
@@ -396,7 +394,7 @@ def _single_adam(
     decouple_wd: bool,
     kahan_sum: bool = False,
     update_parameters: bool = True,
-    rms_scale: float | None = None,
+    scale_rms: float | None = None,
     rescale_factor: float | None = None,
     rescale_factor_sqr: float | None = None,
     **kwargs,
@@ -423,7 +421,7 @@ def _single_adam(
             decouple_wd=decouple_wd,
             kahan_sum=kahan_sum,
             update_parameters=update_parameters,
-            rms_scale=rms_scale,
+            scale_rms=scale_rms,
             rescale_factor=rescale_factor,
             rescale_factor_sqr=rescale_factor_sqr,
         )
@@ -446,7 +444,7 @@ def _single_param_adam(
     decouple_wd: bool,
     kahan_sum: bool = False,
     update_parameters: bool = True,
-    rms_scale: float | None = None,
+    scale_rms: float | None = None,
     rescale_factor: float | None = None,
     rescale_factor_sqr: float | None = None,
     **kwargs,
@@ -466,8 +464,8 @@ def _single_param_adam(
 
     if update_parameters:
         denom = exp_avg_sq.sqrt()
-        if rms_scale is not None:
-            denom.mul_(rms_scale)
+        if scale_rms is not None:
+            denom.mul_(scale_rms)
         denom.add_(eps)
 
         if kahan_sum and param.dtype in KAHAN_DTYPES:
@@ -570,10 +568,10 @@ if HAS_TRITON:
         beta2_comp,
         weight_decay,
         eps,
-        rms_scale,  # used with do_rms_scale
+        scale_rms,  # used with do_scale
         rescale_factor,  # used with do_rescale
         rescale_factor_sqr,  # used with do_rescale
-        do_grad_scale: tl.constexpr,
+        do_scale: tl.constexpr,
         do_rescale: tl.constexpr,
         do_weight_decay: tl.constexpr,
         kahan_sum: tl.constexpr,
@@ -610,8 +608,8 @@ if HAS_TRITON:
 
         if update_parameters:
             rms = tl.sqrt(exp_avg_sq)
-            if do_grad_scale:
-                rms *= rms_scale
+            if do_scale:
+                rms *= scale_rms
 
             if kahan_sum:
                 # load kahan compensation, casting to fp32
@@ -663,7 +661,7 @@ if HAS_TRITON:
         eps: float,
         decouple_wd: bool,
         kahan_sum: bool,
-        rms_scale: float | None,
+        scale_rms: float | None,
         rescale_factor: float | None,
         rescale_factor_sqr: float | None,
         **kwargs,
@@ -694,8 +692,8 @@ if HAS_TRITON:
                     beta2_comp=beta2_comp,
                     weight_decay=weight_decay,
                     eps=eps,
-                    rms_scale=rms_scale,
-                    do_grad_scale=rms_scale is not None,
+                    scale_rms=scale_rms,
+                    do_scale=scale_rms is not None,
                     rescale_factor=rescale_factor,
                     rescale_factor_sqr=rescale_factor_sqr,
                     do_rescale=rescale_factor is not None,
@@ -721,7 +719,7 @@ if HAS_TRITON:
         beta2_comp: float,
         weight_decay: float,
         eps: float,
-        rms_scale: float | None,
+        scale_rms: float | None,
         rescale_factor: float | None,
         rescale_factor_sqr: float | None,
         decouple_wd: bool,
@@ -749,8 +747,8 @@ if HAS_TRITON:
                 beta2_comp=beta2_comp,
                 weight_decay=weight_decay,
                 eps=eps,
-                rms_scale=rms_scale,
-                do_grad_scale=rms_scale is not None,
+                scale_rms=scale_rms,
+                do_scale=scale_rms is not None,
                 rescale_factor=rescale_factor,
                 rescale_factor_sqr=rescale_factor_sqr,
                 do_rescale=rescale_factor is not None,

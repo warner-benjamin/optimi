@@ -140,6 +140,10 @@ class OptimiOptimizerWithGradientScaling(OptimiOptimizer):
             auto_rescale_on_next_iteration=False,
         )
 
+    def _gradient_scaling_init_group(self, group):
+        if group["optimizer_state_scale"] is not None:
+            group["optimizer_state_scale"] = torch.tensor(group["optimizer_state_scale"], dtype=torch.float32)
+
     def _gradient_scaling_make_partial_info(self) -> bool | dict | None:
         """
         Returns None if gradient scaling is not enabled. Returns False if gradient scaling is enabled but the
