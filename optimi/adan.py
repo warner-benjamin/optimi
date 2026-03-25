@@ -18,19 +18,21 @@
 # lion-pytorch - MIT License - Copyright (c) 2023 Phil Wang - https://github.com/lucidrains/lion-pytorch
 
 from collections.abc import Callable, Iterable
+from functools import partial
 from typing import Any
 
 import torch
 from torch import Tensor
 from torch.utils._foreach_utils import _group_tensors_by_device_and_dtype
 
-from optimi.optimizer import OptimiOptimizer
-from optimi.utils import HAS_TRITON, _default_to_triton, _device_guard, _get_triton_block_size, debias_beta
+from .gradientscaling import find_maximum_upscale, OptimizerScalingHelper, ScalingInfo
+from .optimizer import KAHAN_DTYPES, OptimiOptimizerWithGradientScaling
+from .utils import HAS_TRITON, _default_to_triton, _device_guard, _get_triton_block_size, debias_beta
 
 __all__ = ["Adan", "adan"]
 
 
-class Adan(OptimiOptimizer):
+class Adan(OptimiOptimizerWithGradientScaling):
     """Adan Optimizer: Adaptive Nesterov Momentum Algorithm.
 
     Args:
@@ -57,6 +59,12 @@ class Adan(OptimiOptimizer):
         gradient_release: Fuses optimizer step and zero_grad as part of the parameter's backward
             pass. Requires model hooks created with `register_gradient_release`. Incompatible with
             closure (default: False)
+        scale_down_hysteresis: When the optimizer scaling factor is updated downwards, then further
+            divide the scaling factor by this amount. (default: None)
+        scale_up_hysteresis: When the optimizer scaling factor is updated upwards, then further
+            divide the scaling factor by this amount. Upwards rescaling must be triggered manually
+            by setting group["auto_rescale_on_next_iteration"] to True before an optimizer
+            iteration. (default: None)
     """
 
     def __init__(
@@ -73,6 +81,8 @@ class Adan(OptimiOptimizer):
         foreach: bool | None = None,
         triton: bool | None = None,
         gradient_release: bool = False,
+        scale_down_hysteresis: float | None = None,
+        scale_up_hysteresis: float | None = None,
     ):
         if not 0.0 <= betas[0] < 1.0:
             raise ValueError(f"Invalid beta1 parameter: {betas[0]=}")
@@ -98,17 +108,20 @@ class Adan(OptimiOptimizer):
             triton=triton,
             gradient_release=gradient_release,
             setup=False,
+            **self._gradient_scaling_init_arguments(scale_down_hysteresis=scale_down_hysteresis, scale_up_hysteresis=scale_up_hysteresis),
         )
         super().__init__(params, defaults)
 
-    def _init_state(self, group: dict[str, Any], state: dict[Tensor, Any], param: Tensor, gradient_release: bool = False):
+    def _init_state(self, group: dict[str, Any], state: dict[Tensor, Any], param: Tensor, gradient_release: bool = False, scaling_pre=None):
         if "kahan_comp" not in state:
             state["exp_avg"] = torch.zeros_like(param, memory_format=torch.preserve_format)
             state["exp_avg_diff"] = torch.zeros_like(param, memory_format=torch.preserve_format)
             state["exp_avg_sq"] = torch.zeros_like(param, memory_format=torch.preserve_format)
             state["prev_grad"] = param.grad.clone().mul_(-1)
+            if scaling_pre is not None:
+                group["optimizer_state_scale"].fill_(scaling_pre["gradient_scale"])
 
-            if (group["kahan_sum"] or group["kahan_sum"] is None) and param.dtype in [torch.float16, torch.bfloat16]:
+            if (group["kahan_sum"] or group["kahan_sum"] is None) and param.dtype in KAHAN_DTYPES:
                 state["kahan_comp"] = torch.zeros_like(param, memory_format=torch.preserve_format)
                 group["kahan_sum"] = True
             elif group["triton"]:
@@ -148,6 +161,7 @@ class Adan(OptimiOptimizer):
 
         if not group["setup"]:
             group["setup"] = True
+            self._gradient_scaling_setup_group(group)
             group["step"] = torch.tensor(0, dtype=torch.int32)
 
             if group["triton"] is None and group["foreach"] is None:
@@ -171,6 +185,9 @@ class Adan(OptimiOptimizer):
         if closure is not None and param is None:
             with torch.enable_grad():
                 loss = closure()
+
+        if not self._gradient_scaling_pre_step():
+            return loss  # skip because found_inf
 
         if param is None:
             for group in self.param_groups:
@@ -200,6 +217,7 @@ class Adan(OptimiOptimizer):
                     triton=group["triton"],
                     gradient_release=False,
                     optimizer_accumulation=False,
+                    scaling=self._gradient_scaling_group_info(group),
                 )
         else:
             state = self.state[param]
@@ -228,6 +246,7 @@ class Adan(OptimiOptimizer):
                 triton=group["triton"],
                 gradient_release=True,
                 optimizer_accumulation=self._optimizer_accumulation,
+                scaling=self._gradient_scaling_group_info(group),
             )
 
         return loss
@@ -257,6 +276,7 @@ def adan(
     triton: bool = False,
     gradient_release: bool = False,
     optimizer_accumulation: bool = False,
+    scaling: ScalingInfo | None = None,
 ):
     """Functional API to apply a Adan optimization step.
 
@@ -286,6 +306,7 @@ def adan(
         gradient_release: Fuses optimizer step as part of the parameter's backward pass
         optimizer_accumulation: Accumulate gradients into state during gradient release step
     """
+
     # calculate debiased beta hat & complement terms
     step.add_(1)
     step_int = step.item()
@@ -307,6 +328,35 @@ def adan(
             weight_decay = 1 - weight_decay
         else:
             weight_decay = 1 + weight_decay
+
+    if scaling:
+        if not triton:
+            raise ValueError(f"Gradient scaling and {triton=} must be used together")
+
+        # We need an extra margin of safety because of the `exp_avg_diffs` state variable. This variable could end up containing a value
+        # with twice the magnitude of the input gradient.
+        scaler = OptimizerScalingHelper(scaling_info=scaling, scale_opt_upper_limit_extra_factor=1 / 3)
+        scaler.get_max_optimizer_state_scale_up_factor = partial(
+            _adan_max_scale_up, exp_avgs=exp_avgs, exp_avg_diffs=exp_avg_diffs, exp_avg_sqs=exp_avg_sqs, prev_grads=prev_grads
+        )
+        scaler.update()
+        grad_to_opt_scale = scaler.gradient_to_optimizer_scale
+        rescale_factor = scaler.rescale_factor
+        if rescale_factor is not None:
+            rescale_factor_sqr = rescale_factor * rescale_factor
+        else:
+            rescale_factor_sqr = None
+
+        # Scale the variables to prevent both overflow and underflow.
+        scale_grad = grad_to_opt_scale
+        beta3_comp *= 1 / scaler.optimizer_max
+        eps = eps * scaler.optimizer_scale
+        scale_rms = scaler.optimizer_max**0.5
+    else:
+        scale_rms = None
+        scale_grad = None
+        rescale_factor = None
+        rescale_factor_sqr = None
 
     if kahan_comps is None:
         kahan_comps = [None] * len(params)
@@ -343,11 +393,28 @@ def adan(
         beta3_hat=beta3_hat,
         beta3_comp=beta3_comp,
         eps=eps,
+        scale_grad=scale_grad,
+        scale_rms=scale_rms,
+        rescale_factor=rescale_factor,
+        rescale_factor_sqr=rescale_factor_sqr,
         weight_decay=weight_decay,
         adam_wd=adam_wd,
         kahan_sum=kahan_sum,
         update_parameters=(not optimizer_accumulation),
     )
+
+
+def _adan_max_scale_up(
+    exp_avgs: list[Tensor], exp_avg_diffs: list[Tensor], exp_avg_sqs: list[Tensor], prev_grads: list[Tensor], dtype_to_max_value: dict
+) -> list[Tensor]:
+    # state variables that have the same magnitudes as the gradients
+    m1 = find_maximum_upscale(exp_avgs + exp_avg_diffs + prev_grads, target_value_per_dtype=dtype_to_max_value, out_device=None)
+    m2 = find_maximum_upscale(exp_avg_sqs, target_value_per_dtype=dtype_to_max_value, out_device=None)
+
+    m1 += (x.sqrt_() for x in m2)
+
+    # this returns a list of tensors that may be on the GPU
+    return m1
 
 
 def _single_adan(
@@ -448,7 +515,7 @@ def _single_param_adan(
         if adam_wd and weight_decay != 0:
             param.mul_(weight_decay)
 
-        if kahan_sum and param.dtype in [torch.float16, torch.bfloat16]:
+        if kahan_sum and param.dtype in KAHAN_DTYPES:
             # Adan step
             kahan_comp.addcdiv_(exp_avg, denom, value=-lr)
             kahan_comp.addcdiv_(exp_avg_diff, denom, value=-lr * beta2)
@@ -495,7 +562,7 @@ def _foreach_adan(
         (dev_params, dev_grads, dev_exp_avgs, dev_exp_avg_sqs, dev_exp_avg_diffs, dev_prev_grads, dev_kahan_comps),
         _,
     ) in grouped_tensors.items():
-        do_kahan_sum = kahan_sum and dtype in [torch.float16, torch.bfloat16]
+        do_kahan_sum = kahan_sum and dtype in KAHAN_DTYPES
         # difference between current & previous gradients, prev_grad is negated in last step
         torch._foreach_add_(dev_prev_grads, dev_grads)
 
@@ -569,6 +636,12 @@ if HAS_TRITON:
         beta3_comp,
         eps,
         weight_decay,
+        scale_grad,  # used with do_scale
+        scale_rms,  # used with do_scale
+        rescale_factor,  # used with do_rescale
+        rescale_factor_sqr,  # used with do_rescale
+        do_scale: tl.constexpr,
+        do_rescale: tl.constexpr,
         do_weight_decay: tl.constexpr,
         adam_wd: tl.constexpr,
         kahan_sum: tl.constexpr,
@@ -591,6 +664,16 @@ if HAS_TRITON:
         exp_avg_sq = tl.load(exp_avg_sq_ptr + offsets, mask=mask).to(tl.float32)
         prev_grad = tl.load(prev_grad_ptr + offsets, mask=mask).to(tl.float32)
 
+        if do_rescale:
+            # in-place rescale
+            exp_avg *= rescale_factor
+            exp_avg_diff *= rescale_factor
+            exp_avg_sq *= rescale_factor_sqr
+            prev_grad *= rescale_factor
+
+        if do_scale:
+            grad *= scale_grad
+
         # difference between current & previous gradients, prev_grad is negated in last step
         prev_grad = prev_grad + grad
 
@@ -608,17 +691,22 @@ if HAS_TRITON:
         prev_grad_next = -grad
 
         if update_parameters:
-            # Adam-style weight decay
-            if do_weight_decay and adam_wd:
-                param = tl.cast(param * weight_decay, param.dtype)
+            rms = tl.sqrt(exp_avg_sq)
+            if do_scale:
+                rms *= scale_rms
 
             # calculate η_k and Adan update
-            scale = -lr / (tl.sqrt(exp_avg_sq) + eps)
+            scale = -lr / (rms + eps)
             update = tl.fma(beta2, exp_avg_diff, exp_avg)
 
             if kahan_sum:
                 # load kahan compensation, casting to fp32
                 kahan_comp = tl.load(kahan_ptr + offsets, mask=mask).to(tl.float32)
+
+                # Adam-style weight decay
+                if do_weight_decay and adam_wd:
+                    kahan_comp *= weight_decay
+                    kahan_comp -= param * (1.0 - weight_decay)
 
                 # Adan step
                 kahan_comp = kahan_comp + scale * update
@@ -630,15 +718,24 @@ if HAS_TRITON:
                 # save error back to kahan compensation for next iteration
                 kahan_comp = kahan_comp + prev_param.to(tl.float32) - param.to(tl.float32)
 
+                # Adan-style weight decay
+                if do_weight_decay and (not adam_wd):
+                    kahan_comp /= weight_decay
+                    kahan_comp -= (1.0 - 1 / weight_decay) * param
+
                 # store kahan compensation
                 tl.store(kahan_ptr + offsets, tl.cast(kahan_comp, param.dtype), mask=mask)
             else:
+                # Adam-style weight decay
+                if do_weight_decay and adam_wd:
+                    param = tl.cast(param * weight_decay, param.dtype)
+
                 # Adan step
                 param = tl.cast(tl.fma(scale, update, param), param.dtype)
 
-            # Adan-style weight decay
-            if do_weight_decay and (not adam_wd):
-                param = tl.cast(param / weight_decay, param.dtype)
+                # Adan-style weight decay
+                if do_weight_decay and (not adam_wd):
+                    param = tl.cast(param / weight_decay, param.dtype)
 
             # store updated parameter
             tl.store(param_ptr + offsets, param, mask=mask)
@@ -671,10 +768,16 @@ if HAS_TRITON:
         adam_wd: bool,
         kahan_sum: bool,
         update_parameters: bool = True,
+        scale_grad: float | None = None,
+        scale_rms: float | None = None,
+        rescale_factor: float | None = None,
+        rescale_factor_sqr: float | None = None,
         **kwargs,
     ) -> None:
         """Apply a fused Adan step to a list of tensors using the Triton kernel."""
         do_weight_decay = weight_decay != 0.0
+        do_scale = scale_rms is not None
+        do_rescale = rescale_factor is not None
 
         for i, param in enumerate(params):
             n_elements = param.numel()
@@ -701,10 +804,16 @@ if HAS_TRITON:
                     beta3_hat=beta3_hat,
                     beta3_comp=beta3_comp,
                     eps=eps,
+                    scale_grad=scale_grad,
+                    scale_rms=scale_rms,
+                    do_scale=do_scale,
+                    rescale_factor=rescale_factor,
+                    rescale_factor_sqr=rescale_factor_sqr,
+                    do_rescale=do_rescale,
                     weight_decay=weight_decay,
                     do_weight_decay=do_weight_decay,
                     adam_wd=adam_wd,
-                    kahan_sum=kahan_sum and param.dtype in [torch.float16, torch.bfloat16],
+                    kahan_sum=kahan_sum and param.dtype in KAHAN_DTYPES,
                     update_parameters=update_parameters,
                     n_elements=n_elements,
                     BLOCK_SIZE=block_size,
@@ -732,9 +841,16 @@ if HAS_TRITON:
         adam_wd: bool,
         kahan_sum: bool,
         update_parameters: bool,
+        scale_grad: float | None = None,
+        scale_rms: float | None = None,
+        rescale_factor: float | None = None,
+        rescale_factor_sqr: float | None = None,
     ) -> None:
         """Fused Adan step for a single parameter tensor (used with gradient release)."""
         do_weight_decay = weight_decay != 0.0
+        do_scale = scale_rms is not None
+        do_rescale = rescale_factor is not None
+
         n_elements = param.numel()
         block_size = _get_triton_block_size(n_elements)
 
@@ -760,10 +876,16 @@ if HAS_TRITON:
                 beta3_hat=beta3_hat,
                 beta3_comp=beta3_comp,
                 eps=eps,
+                scale_grad=scale_grad,
+                scale_rms=scale_rms,
+                do_scale=do_scale,
+                rescale_factor=rescale_factor,
+                rescale_factor_sqr=rescale_factor_sqr,
+                do_rescale=do_rescale,
                 weight_decay=weight_decay,
                 do_weight_decay=do_weight_decay,
                 adam_wd=adam_wd,
-                kahan_sum=kahan_sum and param.dtype in [torch.float16, torch.bfloat16],
+                kahan_sum=kahan_sum and param.dtype in KAHAN_DTYPES,
                 update_parameters=update_parameters,
                 n_elements=n_elements,
                 BLOCK_SIZE=block_size,
