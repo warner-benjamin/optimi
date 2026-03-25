@@ -145,7 +145,7 @@ class Adam(OptimiOptimizerWithGradientScaling):
 
         if not group["setup"]:
             group["setup"] = True
-            self._gradient_scaling_init_group(group)
+            self._gradient_scaling_setup_group(group)
             group["step"] = torch.tensor(0, dtype=torch.int32)
 
             if group["triton"] is None and group["foreach"] is None:
@@ -167,8 +167,7 @@ class Adam(OptimiOptimizerWithGradientScaling):
             with torch.enable_grad():
                 loss = closure()
 
-        scaling_pre = self._gradient_scaling_make_partial_info()
-        if scaling_pre is False:
+        if not self._gradient_scaling_pre_step():
             return loss  # skip because found_inf
 
         if param is None:
@@ -187,7 +186,7 @@ class Adam(OptimiOptimizerWithGradientScaling):
                     beta2=group["beta2"],
                     weight_decay=group["weight_decay"],
                     eps=group["eps"],
-                    scaling=self._gradient_scaling_group_info(group, scaling_pre),
+                    scaling=self._gradient_scaling_group_info(group),
                     step=group["step"],
                     decouple_wd=group["decouple_wd"],
                     decouple_lr=group["decouple_lr"],
@@ -214,7 +213,7 @@ class Adam(OptimiOptimizerWithGradientScaling):
                 beta2=group["beta2"],
                 weight_decay=group["weight_decay"],
                 eps=group["eps"],
-                scaling=self._gradient_scaling_group_info(group, scaling_pre),
+                scaling=self._gradient_scaling_group_info(group),
                 step=state["step"],
                 decouple_wd=group["decouple_wd"],
                 decouple_lr=group["decouple_lr"],
@@ -666,6 +665,9 @@ if HAS_TRITON:
         rescale_factor_sqr: float | None,
         **kwargs,
     ):
+        do_scale = scale_rms is not None
+        do_rescale = rescale_factor is not None
+
         for i, param in enumerate(params):
             grad = grads[i]
             exp_avg = exp_avgs[i]
@@ -693,10 +695,10 @@ if HAS_TRITON:
                     weight_decay=weight_decay,
                     eps=eps,
                     scale_rms=scale_rms,
-                    do_scale=scale_rms is not None,
+                    do_scale=do_scale,
                     rescale_factor=rescale_factor,
                     rescale_factor_sqr=rescale_factor_sqr,
-                    do_rescale=rescale_factor is not None,
+                    do_rescale=do_rescale,
                     do_weight_decay=weight_decay != 0.0,
                     decouple_wd=decouple_wd,
                     kahan_sum=kahan_sum and param.dtype in KAHAN_DTYPES,
@@ -727,6 +729,9 @@ if HAS_TRITON:
         update_parameters: bool,
         **kwargs,
     ):
+        do_scale = scale_rms is not None
+        do_rescale = rescale_factor is not None
+
         n_elements = param.numel()
         block_size = _get_triton_block_size(n_elements)
         grid = (triton.cdiv(n_elements, block_size),)
@@ -748,10 +753,10 @@ if HAS_TRITON:
                 weight_decay=weight_decay,
                 eps=eps,
                 scale_rms=scale_rms,
-                do_scale=scale_rms is not None,
+                do_scale=do_scale,
                 rescale_factor=rescale_factor,
                 rescale_factor_sqr=rescale_factor_sqr,
-                do_rescale=rescale_factor is not None,
+                do_rescale=do_rescale,
                 do_weight_decay=weight_decay != 0.0,
                 decouple_wd=decouple_wd,
                 kahan_sum=kahan_sum and param.dtype in KAHAN_DTYPES,

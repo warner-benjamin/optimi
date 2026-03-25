@@ -122,6 +122,7 @@ class OptimizerScalingHelper(_OptimizerScalingHelper):
     """
 
     scaling_info: ScalingInfo
+    scale_opt_upper_limit_extra_factor: float = 1.0
     magnitude_limits = DEFAULT_MAGNITUDE_LIMITS
 
     def get_max_optimizer_state_scale_up_factor(self, dtype_to_max_value: dict[torch.dtype, float]) -> list[Tensor]:
@@ -144,7 +145,7 @@ class OptimizerScalingHelper(_OptimizerScalingHelper):
 
         # Compute upper limit on optimizer scale given the current gradient scaling factor (which may
         # have changed since the last iteration).
-        scale_opt_upper_limit = opt_state_max / gradient_max * info.gradient_scale
+        scale_opt_upper_limit = self.scale_opt_upper_limit_extra_factor * opt_state_max / gradient_max * info.gradient_scale
         scale_opt = info.optimizer_scale.item()
         if scale_opt > scale_opt_upper_limit:
             # The current optimizer scale is larger than the upper allowed limit, so we must

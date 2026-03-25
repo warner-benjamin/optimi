@@ -126,7 +126,7 @@ class OptimiOptimizerWithGradientScaling(OptimiOptimizer):
             raise ValueError(f"Both must be set ({scale_down_hysteresis=} and {scale_up_hysteresis=})")
 
         if scale_down_hysteresis is None:
-            return dict(scale_up_hysteresis=None, scale_down_hysteresis=None, optimizer_state_scale=None)
+            return dict(scale_up_hysteresis=None, scale_down_hysteresis=None)
 
         if scale_down_hysteresis < 1.0:
             raise ValueError(f"{scale_down_hysteresis=} must be >= 1")
@@ -136,23 +136,23 @@ class OptimiOptimizerWithGradientScaling(OptimiOptimizer):
         return dict(
             scale_up_hysteresis=scale_up_hysteresis,
             scale_down_hysteresis=scale_down_hysteresis,
-            optimizer_state_scale=float("inf"),  # initial optimizer state scale
             auto_rescale_on_next_iteration=False,
         )
 
-    def _gradient_scaling_init_group(self, group):
-        if group["optimizer_state_scale"] is not None:
-            group["optimizer_state_scale"] = torch.tensor(group["optimizer_state_scale"], dtype=torch.float32)
+    def _gradient_scaling_setup_group(self, group):
+        """This runs exactly once on setup BEFORE the first iteration of the optimizer."""
+        if group["scale_up_hysteresis"] is not None:
+            info = self._gradient_scaling_pre_step_info
+            group["optimizer_state_scale"] = torch.tensor(info["gradient_scale"], dtype=torch.float32)
 
-    def _gradient_scaling_make_partial_info(self) -> bool | dict | None:
+    def _gradient_scaling_pre_step(self) -> bool:
         """
-        Returns None if gradient scaling is not enabled. Returns False if gradient scaling is enabled but the
-        gradient scaler found infs, and is therefore asking us to skip the current iteration. Returns a dictionary
-        otherwise that must be fed into `_gradient_scaling_group_info`.
+        Returns False if gradient scaling is enabled but the gradient scaler found infs, and is therefore asking us to skip the current
+        iteration to avoid poisoning the optimizer state. Returns True otherwise.
         """
         grad_scale = getattr(self, "grad_scale", None)
         if grad_scale is None:
-            return None
+            return True
 
         found_inf = getattr(self, "found_inf", None)
         if hasattr(found_inf, "item"):
@@ -166,15 +166,17 @@ class OptimiOptimizerWithGradientScaling(OptimiOptimizer):
         grad_max = getattr(self, "grad_maximum_magnitude", None)
         if grad_max is not None:
             grad_max = max(grad_max.item(), 1e-3)
-        return dict(gradient_scale=grad_scale, gradient_max_magnitude=grad_max)
 
-    def _gradient_scaling_group_info(self, group, partial_scaling_info: dict):
-        if partial_scaling_info is None:
+        self._gradient_scaling_pre_step_info = dict(gradient_scale=grad_scale, gradient_max_magnitude=grad_max)
+        return True
+
+    def _gradient_scaling_group_info(self, group):
+        if (info := getattr(self, "_gradient_scaling_pre_step_info", None)) is None:
             return None
-        else:
-            return ScalingInfo(
-                optimizer_scale=group["optimizer_state_scale"],
-                scale_down_hysteresis=group["scale_down_hysteresis"],
-                scale_up_hysteresis=(group["scale_up_hysteresis"] if group["auto_rescale_on_next_iteration"] else None),
-                **partial_scaling_info,
-            )
+
+        return ScalingInfo(
+            optimizer_scale=group["optimizer_state_scale"],
+            scale_down_hysteresis=group["scale_down_hysteresis"],
+            scale_up_hysteresis=(group["scale_up_hysteresis"] if group["auto_rescale_on_next_iteration"] else None),
+            **info,
+        )

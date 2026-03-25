@@ -157,7 +157,7 @@ class StableAdamW(OptimiOptimizerWithGradientScaling):
     ):
         if not group["setup"]:
             group["setup"] = True
-            self._gradient_scaling_init_group(group)
+            self._gradient_scaling_setup_group(group)
             group["step"] = torch.tensor(0, dtype=torch.int32)
 
             if group["triton"] is None and group["foreach"] is None:
@@ -197,8 +197,7 @@ class StableAdamW(OptimiOptimizerWithGradientScaling):
             with torch.enable_grad():
                 loss = closure()
 
-        scaling_pre = self._gradient_scaling_make_partial_info()
-        if scaling_pre is False:
+        if not self._gradient_scaling_pre_step():
             return loss  # skip because found_inf
 
         if param is None:
@@ -236,7 +235,7 @@ class StableAdamW(OptimiOptimizerWithGradientScaling):
                     gradient_release=False,
                     optimizer_accumulation=False,
                     mean_squares=mean_squares,
-                    scaling=self._gradient_scaling_group_info(group, scaling_pre),
+                    scaling=self._gradient_scaling_group_info(group),
                 )
         else:
             state = self.state[param]
@@ -265,7 +264,7 @@ class StableAdamW(OptimiOptimizerWithGradientScaling):
                     gradient_release=True,
                     optimizer_accumulation=self._optimizer_accumulation,
                     mean_squares=state["mean_square"],
-                    scaling=self._gradient_scaling_group_info(group, scaling_pre),
+                    scaling=self._gradient_scaling_group_info(group),
                 )
             else:
                 stableadamw(
@@ -288,7 +287,7 @@ class StableAdamW(OptimiOptimizerWithGradientScaling):
                     triton=False,
                     gradient_release=True,
                     optimizer_accumulation=self._optimizer_accumulation,
-                    scaling=self._gradient_scaling_group_info(group, scaling_pre),
+                    scaling=self._gradient_scaling_group_info(group),
                 )
 
         return loss
@@ -345,22 +344,6 @@ def stableadamw(
         mean_squares: RMS calculation scratch tensor for triton kernel
         scaling: Gradient scaling information
     """
-
-    rescale_factor = None
-    rescale_factor_sqr = None
-
-    if scaling:
-        scaler = OptimizerScalingHelper(scaling_info=scaling)
-        # The state variables are the same as for adam
-        scaler.get_max_optimizer_state_scale_up_factor = partial(_adam_max_scale_up, exp_avgs=exp_avgs, exp_avg_sqs=exp_avg_sqs)
-        scaler.update()
-        grad_to_opt_scale = scaler.gradient_to_optimizer_scale
-        rescale_factor = scaler.rescale_factor
-        if rescale_factor is not None:
-            rescale_factor_sqr = rescale_factor * rescale_factor
-    else:
-        grad_to_opt_scale = None
-
     # calculate debiased beta hat & complement terms
     step.add_(1)
     step_int = step.item()
@@ -369,9 +352,21 @@ def stableadamw(
     beta2_hat = debias_beta(beta2, step_int)
     beta2_comp = 1 - beta2_hat
 
-    if grad_to_opt_scale is not None:
-        if foreach:
-            raise ValueError(f"Gradient scaling and {foreach=} cannot be used together")
+    if scaling:
+        if not triton:
+            raise ValueError(f"Gradient scaling and {triton=} must be used together")
+
+        scaler = OptimizerScalingHelper(scaling_info=scaling)
+
+        # The state variables are the same as for adam
+        scaler.get_max_optimizer_state_scale_up_factor = partial(_adam_max_scale_up, exp_avgs=exp_avgs, exp_avg_sqs=exp_avg_sqs)
+        scaler.update()
+        grad_to_opt_scale = scaler.gradient_to_optimizer_scale
+        rescale_factor = scaler.rescale_factor
+        if rescale_factor is not None:
+            rescale_factor_sqr = rescale_factor * rescale_factor
+        else:
+            rescale_factor_sqr = None
 
         # Scale the variables to prevent both overflow and underflow.
         beta1_comp *= grad_to_opt_scale
@@ -381,6 +376,8 @@ def stableadamw(
         scale_rms = scaler.optimizer_max**0.5
         scale_grad_for_rms = grad_to_opt_scale / scale_rms
     else:
+        rescale_factor = None
+        rescale_factor_sqr = None
         eps_sq = eps * eps
         scale_rms = None
         scale_grad_for_rms = None
