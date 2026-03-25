@@ -4,7 +4,7 @@ import io
 import random
 
 import torch
-from optimi import prepare_for_gradient_release, remove_gradient_release
+from optimi import prepare_for_gradient_release, remove_gradient_release, GradScalerBackport
 from torch import Tensor
 
 from .config import Backend, DeviceType, OptTest, OptTestType
@@ -134,6 +134,15 @@ def run_test(
     optimi_kwargs = opttest.to_optimi_kwargs(backend)
     reference_class = opttest.reference_class
 
+    # Pure float16 training requires special care. Scale up the gradients and downscale the
+    # variances (exponential moving average of gradient squared in case of AdamW).
+    if dtype == torch.float16:
+        enable_grad_scaler = True
+        optimi_kwargs["scale_up_hysteresis"] = 1.2
+        optimi_kwargs["scale_down_hysteresis"] = 1.2
+    else:
+        enable_grad_scaler = False
+
     reference_optimizer = None
     optimi_optimizer = None
     torch_optimizers: dict[torch.nn.Parameter, torch.optim.Optimizer] | None = None
@@ -165,7 +174,19 @@ def run_test(
         prepare_for_gradient_release(m2, optimi_optimizer)
         gradient_accumulation_steps = accumulation_spec.gradient_accumulation_steps
 
+    grad_scaler = GradScalerBackport(init_scale=16384.0, enabled=enable_grad_scaler)
+    max_skipped_iteration_fraction = 0.25
+    skipped_iterations = 0
+    if enable_grad_scaler:
+        # Increase the number of iteration to make up for the skipped iterations due to the gradient scaler
+        # finding nans or infs inside the gradients.
+        iterations = round(iterations / (1 - max_skipped_iteration_fraction))
+
     for i in range(iterations):
+        if enable_grad_scaler:
+            for pg in optimi_optimizer.param_groups:
+                pg["auto_rescale_on_next_iteration"] = i % 3 == 2
+
         input1 = torch.randn(batch_size, dim1, device=device, dtype=dtype)
         if test_type == OptTestType.normal:
             input2 = input1.detach().clone()
@@ -200,15 +221,21 @@ def run_test(
         loss3 = torch.nn.functional.mse_loss(output3, target3) if output3 is not None else None
 
         loss1.backward()
-        loss2.backward()
+        losses = [loss2]
         if loss3 is not None:
-            loss3.backward()
+            losses.append(loss3)
+        for loss in grad_scaler.scale(losses):
+            loss.backward()
 
         if test_type == OptTestType.normal:
-            reference_optimizer.step()
-            optimi_optimizer.step()
+            grad_scaler.step(optimi_optimizer)
+            if getattr(optimi_optimizer, "skipped_last_step", False):
+                skipped_iterations += 1
+            else:
+                reference_optimizer.step()
             reference_optimizer.zero_grad()
             optimi_optimizer.zero_grad()
+            grad_scaler.update()
         elif test_type == OptTestType.gradient_release:
             reference_optimizer.step()
             reference_optimizer.zero_grad()
@@ -218,8 +245,10 @@ def run_test(
 
         if test_type in (OptTestType.gradient_release, OptTestType.accumulation):
             if random.random() < 0.5:
-                optimi_optimizer.step()
+                grad_scaler.step(optimi_optimizer)
+                assert not getattr(optimi_optimizer, "skipped_last_step", False)
                 optimi_optimizer.zero_grad()
+                grad_scaler.update()
 
         if test_type == OptTestType.normal:
             assert_most_approx_close(
@@ -305,6 +334,8 @@ def run_test(
                 max_error_rate=max_error_rate,
                 name="PyTorch-Optimi: ",
             )
+
+    assert skipped_iterations < iterations * max_skipped_iteration_fraction
 
     if test_type == OptTestType.accumulation:
         assert_most_approx_close(

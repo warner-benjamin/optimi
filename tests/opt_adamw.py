@@ -12,7 +12,7 @@ from .config import BaseParams, OptTest
 @dataclass
 class AdamWParams(BaseParams):
     betas: tuple[float, float] = (0.9, 0.99)
-    eps: float = 1e-6
+    eps: float = 1e-5
 
 
 # Provide BASE with fully_decoupled_reference so decoupled_lr uses DecoupledAdamW

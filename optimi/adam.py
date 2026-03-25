@@ -15,19 +15,22 @@
 # lion-pytorch - MIT License - Copyright (c) 2023 Phil Wang - https://github.com/lucidrains/lion-pytorch
 
 from collections.abc import Callable, Iterable
+from functools import partial
+import math
 from typing import Any
 
 import torch
 from torch import Tensor
 from torch.utils._foreach_utils import _group_tensors_by_device_and_dtype
 
-from optimi.optimizer import OptimiOptimizer
-from optimi.utils import HAS_TRITON, _default_to_triton, _device_guard, _get_triton_block_size, debias_beta
+from .gradientscaling import find_maximum_upscale, OptimizerScalingHelper, ScalingInfo
+from .optimizer import KAHAN_DTYPES, OptimiOptimizerWithGradientScaling
+from .utils import HAS_TRITON, _default_to_triton, _device_guard, _get_triton_block_size, debias_beta
 
 __all__ = ["Adam", "adam"]
 
 
-class Adam(OptimiOptimizer):
+class Adam(OptimiOptimizerWithGradientScaling):
     """Adam optimizer. Optionally with decoupled weight decay (AdamW).
 
     Args:
@@ -51,6 +54,12 @@ class Adam(OptimiOptimizer):
         gradient_release: Fuses optimizer step and zero_grad as part of the parameter's backward
             pass. Requires model hooks created with `register_gradient_release`. Incompatible with
             closure (default: False)
+        scale_down_hysteresis: When the optimizer scaling factor is updated downwards, then further
+            divide the scaling factor by this amount. (default: None)
+        scale_up_hysteresis: When the optimizer scaling factor is updated upwards, then further
+            divide the scaling factor by this amount. Upwards rescaling must be triggered manually
+            by setting group["auto_rescale_on_next_iteration"] to True before an optimizer
+            iteration. (default: None)
     """
 
     def __init__(
@@ -67,6 +76,8 @@ class Adam(OptimiOptimizer):
         foreach: bool | None = None,
         triton: bool | None = None,
         gradient_release: bool = False,
+        scale_down_hysteresis: float | None = None,
+        scale_up_hysteresis: float | None = None,
     ):
         if not 0.0 <= betas[0] < 1.0:
             raise ValueError(f"Invalid beta1 parameter: {betas[0]=}")
@@ -89,6 +100,7 @@ class Adam(OptimiOptimizer):
             triton=triton,
             gradient_release=gradient_release,
             setup=False,
+            **self._gradient_scaling_init_arguments(scale_down_hysteresis=scale_down_hysteresis, scale_up_hysteresis=scale_up_hysteresis),
         )
         super().__init__(params, defaults)
 
@@ -97,7 +109,7 @@ class Adam(OptimiOptimizer):
             state["exp_avg"] = torch.zeros_like(param, memory_format=torch.preserve_format)
             state["exp_avg_sq"] = torch.zeros_like(param, memory_format=torch.preserve_format)
 
-            if (group["kahan_sum"] or group["kahan_sum"] is None) and param.dtype in [torch.float16, torch.bfloat16]:
+            if (group["kahan_sum"] or group["kahan_sum"] is None) and param.dtype in KAHAN_DTYPES:
                 state["kahan_comp"] = torch.zeros_like(param, memory_format=torch.preserve_format)
                 group["kahan_sum"] = True
             elif group["triton"]:
@@ -133,6 +145,7 @@ class Adam(OptimiOptimizer):
 
         if not group["setup"]:
             group["setup"] = True
+            self._gradient_scaling_setup_group(group)
             group["step"] = torch.tensor(0, dtype=torch.int32)
 
             if group["triton"] is None and group["foreach"] is None:
@@ -154,6 +167,9 @@ class Adam(OptimiOptimizer):
             with torch.enable_grad():
                 loss = closure()
 
+        if not self._gradient_scaling_pre_step():
+            return loss  # skip because found_inf
+
         if param is None:
             for group in self.param_groups:
                 params, grads, exp_avgs, exp_avg_sqs, kahan_comps = [], [], [], [], []
@@ -170,6 +186,7 @@ class Adam(OptimiOptimizer):
                     beta2=group["beta2"],
                     weight_decay=group["weight_decay"],
                     eps=group["eps"],
+                    scaling=self._gradient_scaling_group_info(group),
                     step=group["step"],
                     decouple_wd=group["decouple_wd"],
                     decouple_lr=group["decouple_lr"],
@@ -196,6 +213,7 @@ class Adam(OptimiOptimizer):
                 beta2=group["beta2"],
                 weight_decay=group["weight_decay"],
                 eps=group["eps"],
+                scaling=self._gradient_scaling_group_info(group),
                 step=state["step"],
                 decouple_wd=group["decouple_wd"],
                 decouple_lr=group["decouple_lr"],
@@ -231,6 +249,7 @@ def adam(
     triton: bool = False,
     gradient_release: bool = False,
     optimizer_accumulation: bool = False,
+    scaling: ScalingInfo | None = None,
 ):
     """Functional API to apply an Adam or AdamW optimization step.
 
@@ -256,7 +275,22 @@ def adam(
         triton: Enables the faster Triton implementation
         gradient_release: Fuses optimizer step as part of the parameter's backward pass
         optimizer_accumulation: Accumulate gradients into state during gradient release step
+        scaling: Information used to implement gradient scaling
     """
+
+    grad_to_opt_scale = None
+    rescale_factor = None
+    rescale_factor_sqr = None
+
+    if scaling:
+        scaler = OptimizerScalingHelper(scaling_info=scaling)
+        scaler.get_max_optimizer_state_scale_up_factor = partial(_adam_max_scale_up, exp_avgs=exp_avgs, exp_avg_sqs=exp_avg_sqs)
+        scaler.update()
+        grad_to_opt_scale = scaler.gradient_to_optimizer_scale
+        rescale_factor = scaler.rescale_factor
+        if rescale_factor is not None:
+            rescale_factor_sqr = rescale_factor * rescale_factor
+
     # calculate debiased beta hat & complement terms
     step.add_(1)
     step_int = step.item()
@@ -268,12 +302,31 @@ def adam(
     # calculate decoupled weight decay or fully decoupled weight decay
     if weight_decay != 0:
         if decouple_lr:
-            weight_decay = 1 - (lr / max_lr) * weight_decay
+            weight_decay = (lr / max_lr) * weight_decay
         elif decouple_wd:
-            weight_decay = 1 - lr * weight_decay
+            weight_decay = lr * weight_decay
 
     if kahan_comps is None:
         kahan_comps = [None] * len(params)
+
+    if grad_to_opt_scale is not None:
+        if foreach:
+            raise ValueError(f"Gradient scaling and {foreach=} cannot be used together")
+
+        # Scale the variables to prevent both overflow and underflow.
+        beta1_comp *= grad_to_opt_scale
+        beta2_comp *= grad_to_opt_scale * grad_to_opt_scale / scaler.optimizer_max
+        eps = eps * scaler.optimizer_scale
+        scale_rms = scaler.optimizer_max**0.5
+        if weight_decay != 0 and not (decouple_wd or decouple_lr):
+            # This type of weight decay adds a grad*weight_decay term directly onto the gradients. This can
+            # overflow the gradients or the variables used to store their moving averages. There is no safe way
+            # to implement it without tracking or limiting the magnitudes of the parameters themselves.
+
+            # weight_decay *= scaling.gradient_scale
+            raise ValueError(f"Gradient scaling and L2 weight decay {decouple_wd or decouple_lr=} cannot be used together")
+    else:
+        scale_rms = None
 
     if gradient_release:
         if triton:
@@ -302,11 +355,25 @@ def adam(
         beta2_hat=beta2_hat,
         beta2_comp=beta2_comp,
         weight_decay=weight_decay,
+        weight_decay_comp=1 - weight_decay,
         eps=eps,
         decouple_wd=(decouple_wd or decouple_lr),
         kahan_sum=kahan_sum,
         update_parameters=(not optimizer_accumulation),
+        scale_rms=scale_rms,
+        rescale_factor=rescale_factor,
+        rescale_factor_sqr=rescale_factor_sqr,
     )
+
+
+def _adam_max_scale_up(exp_avgs: list[Tensor], exp_avg_sqs: list[Tensor], dtype_to_max_value: dict) -> list[Tensor]:
+    # enqueue as much work as possible on the GPU(s)
+    m1 = find_maximum_upscale(exp_avgs, target_value_per_dtype=dtype_to_max_value, out_device=None)
+    m2 = find_maximum_upscale(exp_avg_sqs, target_value_per_dtype=dtype_to_max_value, out_device=None)
+    m1 += (x.sqrt_() for x in m2)
+
+    # this returns a list of tensors that may be on the GPU
+    return m1
 
 
 def _single_adam(
@@ -317,6 +384,7 @@ def _single_adam(
     kahan_comps: list[Tensor | None],
     *,
     lr: float,
+    beta1_hat: float,
     beta1_comp: float,
     beta2_hat: float,
     beta2_comp: float,
@@ -325,6 +393,9 @@ def _single_adam(
     decouple_wd: bool,
     kahan_sum: bool = False,
     update_parameters: bool = True,
+    scale_rms: float | None = None,
+    rescale_factor: float | None = None,
+    rescale_factor_sqr: float | None = None,
     **kwargs,
 ):
     for i, param in enumerate(params):
@@ -340,6 +411,7 @@ def _single_adam(
             exp_avg_sq=exp_avg_sq,
             kahan_comp=kahan_comp,
             lr=lr,
+            beta1_hat=beta1_hat,
             beta1_comp=beta1_comp,
             beta2_hat=beta2_hat,
             beta2_comp=beta2_comp,
@@ -348,6 +420,9 @@ def _single_adam(
             decouple_wd=decouple_wd,
             kahan_sum=kahan_sum,
             update_parameters=update_parameters,
+            scale_rms=scale_rms,
+            rescale_factor=rescale_factor,
+            rescale_factor_sqr=rescale_factor_sqr,
         )
 
 
@@ -359,6 +434,7 @@ def _single_param_adam(
     kahan_comp: Tensor | None,
     *,
     lr: float,
+    beta1_hat: float,
     beta1_comp: float,
     beta2_hat: float,
     beta2_comp: float,
@@ -367,23 +443,38 @@ def _single_param_adam(
     decouple_wd: bool,
     kahan_sum: bool = False,
     update_parameters: bool = True,
+    scale_rms: float | None = None,
+    rescale_factor: float | None = None,
+    rescale_factor_sqr: float | None = None,
     **kwargs,
 ):
+    if rescale_factor is not None:
+        # in-place rescale
+        exp_avg.mul_(rescale_factor)
+        exp_avg_sq.mul_(rescale_factor_sqr)
+
     # decoupled weight decay, fully decoupled weight decay, or L2 weight decay
-    if weight_decay != 0 and update_parameters:
-        if decouple_wd:
-            param.mul_(weight_decay)
-        else:
-            grad.add_(param, alpha=weight_decay)
+    if weight_decay != 0 and update_parameters and not decouple_wd:
+        grad.add_(param, alpha=weight_decay)
 
     # update gradient moving averages with debiased betas
-    exp_avg.lerp_(grad, weight=beta1_comp)
+    exp_avg.mul_(beta1_hat).add_(grad, alpha=beta1_comp)
     exp_avg_sq.mul_(beta2_hat).addcmul_(grad, grad, value=beta2_comp)
 
     if update_parameters:
-        if kahan_sum and param.dtype in [torch.float16, torch.bfloat16]:
+        denom = exp_avg_sq.sqrt()
+        if scale_rms is not None:
+            denom.mul_(scale_rms)
+        denom.add_(eps)
+
+        if kahan_sum and param.dtype in KAHAN_DTYPES:
+            if weight_decay != 0 and decouple_wd:
+                # Apply decoupled weight decay directly.
+                kahan_comp.sub_(kahan_comp, alpha=weight_decay)
+                kahan_comp.sub_(param.detach(), alpha=weight_decay)
+
             # Adam step
-            kahan_comp.addcdiv_(exp_avg, exp_avg_sq.sqrt().add_(eps), value=-lr)
+            kahan_comp.addcdiv_(exp_avg, denom, value=-lr)
 
             # update weights with kahan compensation using grad as temp buffer
             grad.copy_(param.detach())
@@ -393,7 +484,9 @@ def _single_param_adam(
             kahan_comp.add_(grad.sub_(param))
         else:
             # Adam step
-            param.addcdiv_(exp_avg, exp_avg_sq.sqrt().add_(eps), value=-lr)
+            if weight_decay != 0 and decouple_wd:
+                param.mul_(1 - weight_decay)
+            param.addcdiv_(exp_avg, denom, value=-lr)
 
 
 def _foreach_adam(
@@ -408,6 +501,7 @@ def _foreach_adam(
     beta2_hat: float,
     beta2_comp: float,
     weight_decay: float,
+    weight_decay_comp: float,
     eps: float,
     decouple_wd: bool,
     kahan_sum: bool = False,
@@ -418,14 +512,11 @@ def _foreach_adam(
         (dev_params, dev_grads, dev_exp_avgs, dev_exp_avg_sqs, dev_kahan_comps),
         _,
     ) in grouped_tensors.items():
-        do_kahan_sum = kahan_sum and dtype in [torch.float16, torch.bfloat16]
+        do_kahan_sum = kahan_sum and dtype in KAHAN_DTYPES
 
         # decoupled weight decay, fully decoupled weight decay, or L2 weight decay
-        if weight_decay != 0:
-            if decouple_wd:
-                torch._foreach_mul_(dev_params, scalar=weight_decay)
-            else:
-                torch._foreach_add_(dev_grads, dev_params, alpha=weight_decay)
+        if weight_decay != 0 and not decouple_wd:
+            torch._foreach_add_(dev_grads, dev_params, alpha=weight_decay)
 
         # update gradient moving averages with debiased betas
         torch._foreach_lerp_(dev_exp_avgs, dev_grads, weight=beta1_comp)
@@ -440,6 +531,8 @@ def _foreach_adam(
         if do_kahan_sum:
             # Adam step
             torch._foreach_addcdiv_(dev_kahan_comps, dev_exp_avgs, dev_grads, value=-lr)
+            if weight_decay != 0 and decouple_wd:
+                torch._foreach_add_(dev_kahan_comps, dev_params, alpha=weight_decay)
 
             # update weights with kahan compensation using dev_grads as temp buffer
             torch._foreach_copy_(dev_grads, dev_params)
@@ -449,6 +542,9 @@ def _foreach_adam(
             torch._foreach_sub_(dev_grads, dev_params, alpha=1)
             torch._foreach_add_(dev_kahan_comps, dev_grads, alpha=1)
         else:
+            if weight_decay != 0 and decouple_wd:
+                torch._foreach_mul_(dev_params, scalar=weight_decay_comp)
+
             # Adam step
             torch._foreach_addcdiv_(dev_params, dev_exp_avgs, dev_grads, value=-lr)
 
@@ -471,6 +567,11 @@ if HAS_TRITON:
         beta2_comp,
         weight_decay,
         eps,
+        scale_rms,  # used with do_scale
+        rescale_factor,  # used with do_rescale
+        rescale_factor_sqr,  # used with do_rescale
+        do_scale: tl.constexpr,
+        do_rescale: tl.constexpr,
         do_weight_decay: tl.constexpr,
         kahan_sum: tl.constexpr,
         decouple_wd: tl.constexpr,
@@ -491,24 +592,34 @@ if HAS_TRITON:
         exp_avg = tl.load(exp_avg_ptr + offsets, mask=mask).to(tl.float32)
         exp_avg_sq = tl.load(exp_avg_sq_ptr + offsets, mask=mask).to(tl.float32)
 
-        # decoupled weight decay, fully decoupled weight decay, or L2 weight decay
-        if do_weight_decay and update_parameters:
-            if decouple_wd:
-                param = tl.cast(param * weight_decay, param.dtype)
-            else:
-                grad = grad + param.to(tl.float32) * weight_decay
+        if do_rescale:
+            # in-place rescale
+            exp_avg *= rescale_factor
+            exp_avg_sq *= rescale_factor_sqr
+
+        # L2 weight decay
+        if do_weight_decay and update_parameters and not decouple_wd:
+            grad = grad + param.to(tl.float32) * weight_decay
 
         # update gradient moving averages:
         exp_avg = tl.fma(exp_avg, beta1_hat, beta1_comp * grad)
         exp_avg_sq = tl.fma(exp_avg_sq, beta2_hat, beta2_comp * grad * grad)
 
         if update_parameters:
+            rms = tl.sqrt(exp_avg_sq)
+            if do_scale:
+                rms *= scale_rms
+
             if kahan_sum:
                 # load kahan compensation, casting to fp32
                 kahan_comp = tl.load(kahan_ptr + offsets, mask=mask).to(tl.float32)
 
                 # AdamW step, using the kahan comp instead of param
-                kahan_comp = kahan_comp - (lr * exp_avg / (tl.sqrt(exp_avg_sq) + eps))
+                kahan_comp -= lr * exp_avg / (rms + eps)
+
+                # apply decoupled weight decay or fully decoupled weight decay
+                if do_weight_decay and decouple_wd:
+                    kahan_comp -= weight_decay * param
 
                 # update weights with downcasted kahan update
                 prev_param = param
@@ -521,7 +632,10 @@ if HAS_TRITON:
                 tl.store(kahan_ptr + offsets, tl.cast(kahan_comp, param.dtype), mask=mask)
             else:
                 # Standard AdamW step, optionally downcasting to param.dtype from fp32 intermediates
-                param = param + tl.cast((-lr * exp_avg / (tl.sqrt(exp_avg_sq) + eps)), param.dtype)
+                subtrahend = lr * exp_avg / (rms + eps)
+                if do_weight_decay and decouple_wd:
+                    subtrahend += weight_decay * param
+                param = param - tl.cast(subtrahend, param.dtype)
 
             # Store updated parameters
             tl.store(param_ptr + offsets, param, mask=mask)
@@ -546,8 +660,14 @@ if HAS_TRITON:
         eps: float,
         decouple_wd: bool,
         kahan_sum: bool,
+        scale_rms: float | None,
+        rescale_factor: float | None,
+        rescale_factor_sqr: float | None,
         **kwargs,
     ):
+        do_scale = scale_rms is not None
+        do_rescale = rescale_factor is not None
+
         for i, param in enumerate(params):
             grad = grads[i]
             exp_avg = exp_avgs[i]
@@ -574,9 +694,14 @@ if HAS_TRITON:
                     beta2_comp=beta2_comp,
                     weight_decay=weight_decay,
                     eps=eps,
+                    scale_rms=scale_rms,
+                    do_scale=do_scale,
+                    rescale_factor=rescale_factor,
+                    rescale_factor_sqr=rescale_factor_sqr,
+                    do_rescale=do_rescale,
                     do_weight_decay=weight_decay != 0.0,
                     decouple_wd=decouple_wd,
-                    kahan_sum=kahan_sum and param.dtype in [torch.float16, torch.bfloat16],
+                    kahan_sum=kahan_sum and param.dtype in KAHAN_DTYPES,
                     update_parameters=True,
                     n_elements=n_elements,
                     BLOCK_SIZE=block_size,
@@ -596,11 +721,17 @@ if HAS_TRITON:
         beta2_comp: float,
         weight_decay: float,
         eps: float,
+        scale_rms: float | None,
+        rescale_factor: float | None,
+        rescale_factor_sqr: float | None,
         decouple_wd: bool,
         kahan_sum: bool,
         update_parameters: bool,
         **kwargs,
     ):
+        do_scale = scale_rms is not None
+        do_rescale = rescale_factor is not None
+
         n_elements = param.numel()
         block_size = _get_triton_block_size(n_elements)
         grid = (triton.cdiv(n_elements, block_size),)
@@ -621,9 +752,14 @@ if HAS_TRITON:
                 beta2_comp=beta2_comp,
                 weight_decay=weight_decay,
                 eps=eps,
+                scale_rms=scale_rms,
+                do_scale=do_scale,
+                rescale_factor=rescale_factor,
+                rescale_factor_sqr=rescale_factor_sqr,
+                do_rescale=do_rescale,
                 do_weight_decay=weight_decay != 0.0,
                 decouple_wd=decouple_wd,
-                kahan_sum=kahan_sum and param.dtype in [torch.float16, torch.bfloat16],
+                kahan_sum=kahan_sum and param.dtype in KAHAN_DTYPES,
                 update_parameters=update_parameters,
                 n_elements=n_elements,
                 BLOCK_SIZE=block_size,

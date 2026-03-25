@@ -11,7 +11,7 @@ from .config import BaseParams, OptTest
 @dataclass
 class StableAdamWParams(BaseParams):
     betas: tuple[float, float] = (0.9, 0.99)
-    eps: float = 1e-6
+    eps: float = 1e-5
 
 
 BASE = OptTest(

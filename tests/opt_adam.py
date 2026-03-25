@@ -11,7 +11,7 @@ from .config import BaseParams, OptTest
 @dataclass
 class AdamParams(BaseParams):
     betas: tuple[float, float] = (0.9, 0.99)
-    eps: float = 1e-6
+    eps: float = 1e-5
 
 
 # Provide BASE so the framework generates base/l2/decoupled variants as applicable.

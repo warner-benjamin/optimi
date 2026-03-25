@@ -14,7 +14,8 @@ from collections.abc import Iterable
 
 from torch import Tensor
 
-from optimi import Adam, adam
+from .adam import Adam, adam
+from .gradientscaling import ScalingInfo
 
 __all__ = ["AdamW", "adamw"]
 
@@ -58,6 +59,8 @@ class AdamW(Adam):
         foreach: bool | None = None,
         triton: bool | None = None,
         gradient_release: bool = False,
+        scale_down_hysteresis: float | None = None,
+        scale_up_hysteresis: float | None = None,
     ):
         super().__init__(
             params=params,
@@ -72,6 +75,8 @@ class AdamW(Adam):
             foreach=foreach,
             triton=triton,
             gradient_release=gradient_release,
+            scale_down_hysteresis=scale_down_hysteresis,
+            scale_up_hysteresis=scale_up_hysteresis,
         )
 
 
@@ -95,6 +100,7 @@ def adamw(
     triton: bool = False,
     gradient_release: bool = False,
     optimizer_accumulation: bool = False,
+    scaling: ScalingInfo | None = None,
 ):
     """Functional API to apply an AdamW optimization step.
 
@@ -140,4 +146,5 @@ def adamw(
         triton=triton,
         gradient_release=gradient_release,
         optimizer_accumulation=optimizer_accumulation,
+        scaling=scaling,
     )

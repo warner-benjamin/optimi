@@ -2,6 +2,7 @@ import pytest
 import torch
 from _pytest.mark.structures import ParameterSet
 
+import optimi
 
 from .config import Backend, DeviceType, OptTest, OptTestType, discover_tests
 from .runner import run_test
@@ -13,6 +14,7 @@ DEVICE_PARAMS = [
 DTYPE_PARAMS = [
     pytest.param(torch.float32, marks=pytest.mark.float32, id="float32"),
     pytest.param(torch.bfloat16, marks=pytest.mark.bfloat16, id="bfloat16"),
+    pytest.param(torch.float16, marks=pytest.mark.float16, id="float16"),
 ]
 BACKEND_PARAMS = [
     pytest.param(Backend.torch, marks=pytest.mark.torch, id=Backend.torch.value),
@@ -78,6 +80,18 @@ def _should_skip(test_type: OptTestType, opttest: OptTest, device_type: DeviceTy
 
     # 8. Skip foreach for gradient release and accumulation tests
     if test_type != OptTestType.normal and backend == Backend.foreach:
+        return True
+
+    # 9. Use float16 only on supported optimizers
+    if dtype == torch.float16 and not (
+        issubclass(opttest.optimi_class, optimi.Adam)
+        and backend != Backend.foreach
+        and (opttest.optimi_params.decouple_lr or opttest.optimi_params.decouple_wd or opttest.optimi_params.weight_decay == 0)
+        or issubclass(opttest.optimi_class, optimi.StableAdamW)
+        and backend == Backend.triton
+        or issubclass(opttest.optimi_class, optimi.Adan)
+        and backend == Backend.triton
+    ):
         return True
 
     return False
