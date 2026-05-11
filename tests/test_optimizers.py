@@ -2,7 +2,6 @@ import pytest
 import torch
 from _pytest.mark.structures import ParameterSet
 
-
 from .config import Backend, DeviceType, OptTest, OptTestType, discover_tests
 from .runner import run_test
 
@@ -61,15 +60,19 @@ def _should_skip(test_type: OptTestType, opttest: OptTest, device_type: DeviceTy
     if test_type in set(opttest.skip_tests):
         return True
 
-    # 4. Respect per-test dtype constraints if provided
+    # 4. FlashOptim harness cases are Triton-only until later milestones add other paths.
+    if opttest.triton_only and backend != Backend.triton:
+        return True
+
+    # 5. Respect per-test dtype constraints if provided
     if opttest.only_dtypes and dtype not in opttest.only_dtypes:
         return True
 
-    # 5. Gradient release and accumulation are GPU-only tests
+    # 6. Gradient release and accumulation are GPU-only tests
     if test_type in (OptTestType.gradient_release, OptTestType.accumulation) and device_type == DeviceType.cpu:
         return True
 
-    # 6. bfloat16 is not supported on MPS
+    # 7. bfloat16 is not supported on MPS
     if (
         device_type == DeviceType.gpu
         and dtype == torch.bfloat16
@@ -78,7 +81,7 @@ def _should_skip(test_type: OptTestType, opttest: OptTest, device_type: DeviceTy
     ):
         return True
 
-    # 7. Skip bfloat16 on CPU for most optimizers; allow anyadam exception via opttest.any_precision
+    # 8. Skip bfloat16 on CPU for most optimizers; allow anyadam exception via opttest.any_precision
     if device_type == DeviceType.cpu and dtype == torch.bfloat16 and not opttest.any_precision:
         return True
 

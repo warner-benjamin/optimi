@@ -10,10 +10,8 @@ from typing import Any
 
 import torch
 from optimi.optimizer import OptimiOptimizer
-from torch.optim import Optimizer
-
-
 from optimi.utils import MIN_TORCH_2_6
+from torch.optim import Optimizer
 
 
 class OptTestType(Enum):
@@ -162,9 +160,12 @@ class BaseParams:
     weight_decay: float = 0.0
     decouple_wd: bool = False
     decouple_lr: bool = False
+    flash: bool | str | None = None
+    quantize: bool = False
+    stochastic_rounding: bool = False
     triton: bool = False
 
-    def with_(self, **overrides: Any) -> "BaseParams":
+    def with_(self, **overrides: Any) -> BaseParams:
         return replace(self, **overrides)
 
     def _kwargs_for(self, cls: type | None) -> dict[str, Any]:
@@ -201,6 +202,7 @@ class OptTest:
     # Behavior / constraints
     skip_tests: list[OptTestType] = field(default_factory=list)
     any_precision: bool = False
+    triton_only: bool = False
     test_decoupled_wd: bool = True
     custom_iterations: dict[OptTestType | tuple[OptTestType, DeviceType] | tuple[OptTestType, DeviceType, torch.dtype], int] | None = None
     spec: TestSpec = field(default_factory=TestSpec)
@@ -251,8 +253,6 @@ class OptTest:
         return "decouple_wd" in inspect.signature(self.optimi_class.__init__).parameters
 
 
-
-
 def default_variants(base: OptTest) -> list[OptTest]:
     """Generate base + L2 + decoupled variants with minimal boilerplate."""
     out: list[OptTest] = []
@@ -266,6 +266,7 @@ def default_variants(base: OptTest) -> list[OptTest]:
         test_decoupled_wd=base.test_decoupled_wd,
         skip_tests=list(base.skip_tests),
         any_precision=base.any_precision,
+        triton_only=base.triton_only,
         custom_iterations=base.custom_iterations,
         spec=base.spec,
         only_dtypes=base.only_dtypes,

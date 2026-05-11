@@ -15,6 +15,7 @@ __all__ = [
     "init_flash_state",
     "normalize_flash_precision",
     "reconstruct_fp32_param",
+    "resolve_effective_flash",
     "uses_flash",
 ]
 
@@ -85,6 +86,29 @@ def effective_flash_precision(param: Tensor, flash: bool | str | FlashPrecision 
     if precision == FlashPrecision.OFF:
         return None
     return precision
+
+
+def resolve_effective_flash(
+    params: list[Tensor],
+    grads: list[Tensor],
+    flash: bool | str | FlashPrecision | None,
+    triton: bool,
+    triton_supported: bool,
+) -> list[FlashPrecision | None]:
+    """Resolve group FlashOptim precision and validate explicit FlashOptim requirements."""
+    explicit_flash = uses_flash(flash)
+    if explicit_flash and not triton_supported:
+        raise ValueError("FlashOptim training support requires Triton-supported GPU/XPU parameters.")
+
+    effective_flashes = [effective_flash_precision(param, flash, triton) for param in params]
+    if explicit_flash:
+        if not any(effective_flash is not None for effective_flash in effective_flashes):
+            raise ValueError("flash was enabled, but no bf16 or fp16 parameters were found.")
+        for param, grad, effective_flash in zip(params, grads, effective_flashes):
+            if effective_flash is not None and (not param.is_contiguous() or not grad.is_contiguous()):
+                raise ValueError("FlashOptim training support requires contiguous parameters and gradients.")
+
+    return effective_flashes
 
 
 def _check_narrow_param(param: Tensor):

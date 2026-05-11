@@ -5,9 +5,10 @@ from typing import Any
 
 import optimi
 import torch
+
 from tests import reference
 
-from .config import BaseParams, OptTest, OptTestType
+from .config import BaseParams, NormalSpec, OptTest, OptTestType, TestSpec, Tolerance
 
 
 @dataclass
@@ -62,5 +63,47 @@ TESTS = [
         optimi_params=SGDParams(momentum=0.9, dampening=True, decouple_lr=True, weight_decay=1e-5, torch_init=True),
         reference_class=reference.DecoupledSGDW,
         reference_params=SGDParams(momentum=0.9, dampening=0.9, weight_decay=1e-5),
+    ),
+    OptTest(
+        name="sgd_flash",
+        optimi_class=optimi.SGD,
+        optimi_params=SGDParams(flash=True),
+        reference_class=torch.optim.SGD,
+        reference_params=SGDParams(),
+        skip_tests=[OptTestType.gradient_release, OptTestType.accumulation],
+        any_precision=True,
+        triton_only=True,
+        only_dtypes=[torch.bfloat16],
+        spec=TestSpec(
+            normal=NormalSpec(
+                iterations_gpu=8,
+                tolerance={
+                    torch.float32: Tolerance(atol=1e-6, rtol=1e-5, max_error_rate=5e-4),
+                    torch.bfloat16: Tolerance(atol=2e-2, rtol=2e-2, max_error_rate=0.08),
+                    torch.float16: Tolerance(atol=1e-3, rtol=1e-2, max_error_rate=0.08),
+                },
+            )
+        ),
+    ),
+    OptTest(
+        name="sgd_flash_momentum",
+        optimi_class=optimi.SGD,
+        optimi_params=SGDParams(momentum=0.9, flash=True),
+        reference_class=torch.optim.SGD,
+        reference_params=SGDParams(momentum=0.9),
+        skip_tests=[OptTestType.gradient_release, OptTestType.accumulation],
+        any_precision=True,
+        triton_only=True,
+        only_dtypes=[torch.bfloat16],
+        spec=TestSpec(
+            normal=NormalSpec(
+                iterations_gpu=8,
+                tolerance={
+                    torch.float32: Tolerance(atol=1e-6, rtol=1e-5, max_error_rate=5e-4),
+                    torch.bfloat16: Tolerance(atol=2e-2, rtol=2e-2, max_error_rate=0.08),
+                    torch.float16: Tolerance(atol=1e-3, rtol=1e-2, max_error_rate=0.08),
+                },
+            )
+        ),
     ),
 ]

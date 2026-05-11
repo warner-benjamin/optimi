@@ -20,7 +20,7 @@ from typing import Any
 import torch
 from torch import Tensor
 
-from optimi.flash import FlashPrecision, effective_flash_precision, init_flash_state, uses_flash
+from optimi.flash import FlashPrecision, init_flash_state, resolve_effective_flash
 from optimi.optimizer import OptimiOptimizer
 from optimi.utils import HAS_TRITON, _default_to_triton, _device_guard, _get_triton_block_size, debias_beta
 
@@ -157,17 +157,7 @@ class Adam(OptimiOptimizer):
             if group["triton"] is None:
                 group["triton"] = _default_to_triton(params)
 
-        if uses_flash(group["flash"]) and not _default_to_triton(params):
-            raise ValueError("FlashOptim training support requires Triton-supported GPU/XPU parameters.")
-
-        effective_flashes = [effective_flash_precision(p, group["flash"], group["triton"]) for p in params]
-        if uses_flash(group["flash"]):
-            if not any(flash is not None for flash in effective_flashes):
-                raise ValueError("flash was enabled, but no bf16 or fp16 parameters were found.")
-            for p, grad, effective_flash in zip(params, grads, effective_flashes):
-                if effective_flash is not None and (not p.is_contiguous() or not grad.is_contiguous()):
-                    raise ValueError("FlashOptim training support requires contiguous parameters and gradients.")
-
+        effective_flashes = resolve_effective_flash(params, grads, group["flash"], group["triton"], _default_to_triton(params))
         any_effective_flash = any(flash is not None for flash in effective_flashes)
         for param, state, effective_flash in zip(params, states, effective_flashes):
             effective_kahan = (
@@ -348,6 +338,7 @@ def adam(
     if foreach:
         raise ValueError("foreach=True is no longer supported. Set foreach=False or use triton=True.")
 
+    use_flash_impl = False
     if gradient_release:
         if flash_comps is not None:
             raise ValueError("FlashOptim training support does not support gradient_release=True yet.")
@@ -357,11 +348,8 @@ def adam(
             func = _single_param_adam
     else:
         if triton:
-            func = (
-                _triton_adam_flash
-                if flash_comps is not None and any(flash_comp is not None for flash_comp in flash_comps)
-                else _triton_adam
-            )
+            use_flash_impl = flash_comps is not None and any(flash_comp is not None for flash_comp in flash_comps)
+            func = _triton_adam_flash if use_flash_impl else _triton_adam
         else:
             if flash_comps is not None and any(flash_comp is not None for flash_comp in flash_comps):
                 raise ValueError("FlashOptim training support requires triton=True")
@@ -569,6 +557,7 @@ if HAS_TRITON:
         eps: float,
         decouple_wd: bool,
         kahan_sum: bool,
+        update_parameters: bool,
         **kwargs,
     ):
         for i, param in enumerate(params):
@@ -600,7 +589,7 @@ if HAS_TRITON:
                     do_weight_decay=weight_decay != 0.0,
                     decouple_wd=decouple_wd,
                     kahan_sum=kahan_sum and param.dtype in [torch.float16, torch.bfloat16],
-                    update_parameters=True,
+                    update_parameters=update_parameters,
                     n_elements=n_elements,
                     BLOCK_SIZE=block_size,
                 )
@@ -689,6 +678,7 @@ if HAS_TRITON:
         decouple_wd: bool,
         kahan_sum: bool,
         update_parameters: bool,
+        **kwargs,
     ):
         for i, param in enumerate(params):
             grad = grads[i]
