@@ -687,7 +687,7 @@ if HAS_TRITON:
         exp_avg_ptr,
         exp_avg_scale_ptr,
         flash_ptr,
-        stochastic_seed,
+        stochastic_seed_ptr,
         lr,
         momentum,
         weight_decay,
@@ -756,6 +756,7 @@ if HAS_TRITON:
 
             if use_flash:
                 rng_offsets = offsets + step_int * n_elements
+                stochastic_seed = tl.load(stochastic_seed_ptr) if stochastic_rounding else 0
                 flash_comp = _compute_flash(
                     param_fp32,
                     param,
@@ -800,7 +801,7 @@ if HAS_TRITON:
             exp_avg = exp_avgs[i]
             exp_avg_scale = exp_avg_scales[i] if quantize_state else param
             flash_comp = flash_comps[i]
-            stochastic_seed = stochastic_seeds[i].item() if stochastic_rounding else 0
+            stochastic_seed = stochastic_seeds[i] if stochastic_rounding else param
 
             n_elements = param.numel()
             block_size = _get_triton_block_size(n_elements)
@@ -818,7 +819,7 @@ if HAS_TRITON:
                     exp_avg_ptr=exp_avg,
                     exp_avg_scale_ptr=exp_avg_scale,
                     flash_ptr=flash_ptr,
-                    stochastic_seed=stochastic_seed,
+                    stochastic_seed_ptr=stochastic_seed,
                     lr=lr,
                     momentum=momentum,
                     weight_decay=weight_decay,
@@ -904,7 +905,7 @@ if HAS_TRITON:
         grid = (triton.cdiv(n_elements, block_size),)
         use_flash = flash_comps is not None
         flash_ptr = flash_comps if use_flash else param
-        stochastic_seed = stochastic_seeds.item() if stochastic_rounding else 0
+        stochastic_seed = stochastic_seeds if stochastic_rounding else param
         flash_t = tl.int16 if use_flash and flash_comps.dtype == torch.int16 else tl.int8
         signed_max = 32767 if use_flash and flash_comps.dtype == torch.int16 else 127
         mantissa_bits = 10 if param.dtype == torch.float16 else 7
@@ -916,7 +917,7 @@ if HAS_TRITON:
                 exp_avg_ptr=exp_avg,
                 exp_avg_scale_ptr=exp_avg_scales if quantize_state else param,
                 flash_ptr=flash_ptr,
-                stochastic_seed=stochastic_seed,
+                stochastic_seed_ptr=stochastic_seed,
                 lr=lr,
                 momentum=momentum,
                 weight_decay=weight_decay,

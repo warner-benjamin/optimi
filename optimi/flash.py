@@ -260,12 +260,11 @@ if HAS_TRITON:
         normalized = tl.clamp(_scale_by_exp2(error, -scale), -1.0, 1.0)
         scaled = normalized * signed_max
         if stochastic_rounding:
-            lower = tl.floor(scaled)
             rng = (rng_offsets.to(tl.uint32) + stochastic_seed.to(tl.uint32)) * 1664525 + 1013904223
             rng = (rng ^ (rng >> 16)) * 2246822519
             rng = rng ^ (rng >> 13)
             uniform = rng.to(tl.float32) * 2.3283064365386963e-10
-            rounded = lower + tl.where(uniform < scaled - lower, 1.0, 0.0)
+            rounded = tl.floor(scaled + uniform)
         else:
             rounded_abs = tl.floor(tl.abs(scaled) + 0.5)
             rounded = tl.where(scaled < 0, -rounded_abs, rounded_abs)
