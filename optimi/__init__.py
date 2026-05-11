@@ -8,6 +8,7 @@ from .gradientrelease import prepare_for_gradient_release, remove_gradient_relea
 from .lion import Lion, lion
 from .radam import RAdam, radam
 from .ranger import Ranger, ranger
+from .serialization import compressed_state_dict, load_compressed_state_dict
 from .sgd import SGD, sgd
 from .stableadamw import StableAdamW, stableadamw
 from .utils import param_groups_weight_decay, to_low_precision

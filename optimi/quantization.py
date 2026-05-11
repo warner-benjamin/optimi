@@ -9,6 +9,7 @@ from torch.optim.optimizer import Optimizer
 
 GROUP_SIZE = 32
 SCALE_SENTINEL = 1e-12
+COMPRESSED_STATE_DICT_KEY = "optimi_compressed_state"
 
 
 @dataclass(frozen=True)
@@ -154,3 +155,9 @@ def restore_integer_state_(optimizer, state_dict, state_names: tuple[str, ...]):
                 tensor = saved_state.get(state_name)
                 if torch.is_tensor(tensor) and tensor.dtype in (torch.int8, torch.int16, torch.uint8):
                     state[state_name] = tensor.to(device=param.device)
+
+
+def reject_compressed_state_dict(state_dict):
+    """Reject optimi compressed checkpoints in regular load_state_dict."""
+    if COMPRESSED_STATE_DICT_KEY in state_dict:
+        raise ValueError("Compressed optimi checkpoints must be loaded with optimi.load_compressed_state_dict.")

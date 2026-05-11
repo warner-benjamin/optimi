@@ -34,6 +34,7 @@ from optimi.quantization import (
     export_quantized_state_dict,
     init_quantized_state,
     quantize_loaded_state_,
+    reject_compressed_state_dict,
     restore_integer_state_,
     validate_quantized_state_support,
 )
@@ -233,6 +234,7 @@ class Adam(OptimiOptimizer):
 
     def load_state_dict(self, state_dict):
         """Loads optimizer state and re-quantizes state for quantized groups."""
+        reject_compressed_state_dict(state_dict)
         super().load_state_dict(state_dict)
         restore_integer_state_(self, state_dict, ("flash_comp",))
         quantize_loaded_state_(self, _QUANTIZED_STATES)

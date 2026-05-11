@@ -7,6 +7,7 @@ from torch import Tensor
 from torch.optim.optimizer import Optimizer
 
 from optimi.flash import FlashPrecision, normalize_flash_precision, uses_flash
+from optimi.quantization import reject_compressed_state_dict
 from optimi.utils import HAS_TRITON, MIN_TORCH_2_1, MIN_TORCH_2_6
 
 
@@ -105,6 +106,11 @@ class OptimiOptimizer(Optimizer):
                 hooks created with `register_gradient_release`. Incompatible with `closure`.
         """
         raise NotImplementedError
+
+    def load_state_dict(self, state_dict):
+        """Loads optimizer state and rejects optimi compressed checkpoints."""
+        reject_compressed_state_dict(state_dict)
+        return super().load_state_dict(state_dict)
 
     @torch._disable_dynamo
     def zero_grad(self, set_to_none: bool = True, param: Tensor | None = None):

@@ -42,6 +42,8 @@ opt = AdamW(model.parameters(), lr=1e-3, flash=True, quantize=True, triton=True)
 
 Default `state_dict()` output stays PyTorch-compatible. Quantized live optimizer state is exported as dequantized floating tensors, and scale tensors are not exposed in default checkpoints.
 
+Use `optimi.compressed_state_dict(optimizer)` and `optimi.load_compressed_state_dict(optimizer, state_dict)` to save and load optimi compressed checkpoints that preserve quantized integer state, scales, FlashOptim metadata, and `flash_comp` directly.
+
 ## Stochastic Rounding
 
 `stochastic_rounding=True` applies stochastic rounding to FlashOptim correction bits after the low precision parameter has already been written. It does not stochastic-round every low precision tensor write.
@@ -65,7 +67,7 @@ Each parameter owns a deterministic stochastic-rounding stream initialized from 
 | Ranger | no | no | no | no |
 | StableAdamW | no | no | no | no |
 
-Compressed FlashOptim checkpoint helpers are not part of the current public API. Use the default optimizer `state_dict()` and `load_state_dict()` APIs.
+Regular `load_state_dict()` rejects optimi compressed checkpoints. Load compressed checkpoints with `optimi.load_compressed_state_dict(...)`.
 
 ## Kahan Summation
 
