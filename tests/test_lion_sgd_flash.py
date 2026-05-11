@@ -34,12 +34,11 @@ def test_lion_sgd_flash_rejects_kahan_sum_conflict(optimizer_cls):
 
 
 @pytest.mark.parametrize("optimizer_cls", [Lion, SGD])
-@pytest.mark.parametrize("kwargs", [{"quantize": True}, {"stochastic_rounding": True}])
-def test_lion_sgd_flash_reserved_options_raise(optimizer_cls, kwargs):
+def test_lion_sgd_flash_reserved_options_raise(optimizer_cls):
     param = torch.nn.Parameter(torch.ones(2, dtype=torch.bfloat16))
 
     with pytest.raises(ValueError, match="not supported until"):
-        optimizer_cls([param], lr=1e-3, triton=True, **kwargs)
+        optimizer_cls([param], lr=1e-3, triton=True, stochastic_rounding=True)
 
 
 @pytest.mark.parametrize("optimizer_cls", [Lion, SGD])

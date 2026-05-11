@@ -26,9 +26,20 @@ from torch import Tensor
 
 from optimi.flash import FlashPrecision, init_flash_state, resolve_effective_flash
 from optimi.optimizer import OptimiOptimizer
+from optimi.quantization import (
+    MOMENTUM_STATE,
+    export_quantized_state_dict,
+    init_quantized_state,
+    quantize_loaded_state_,
+    quantize_state_,
+    restore_integer_state_,
+    validate_quantized_state_support,
+)
 from optimi.utils import HAS_TRITON, _default_to_triton, _device_guard, _get_triton_block_size
 
 __all__ = ["SGD", "sgd"]
+
+_QUANTIZED_STATES = {"exp_avg": ("exp_avg_scales", MOMENTUM_STATE)}
 
 
 class SGD(OptimiOptimizer):
@@ -53,7 +64,8 @@ class SGD(OptimiOptimizer):
             parameters (default: None)
         flash: Enables FlashOptim parameter compensation for low precision Triton training
             (default: None)
-        quantize: Reserved for optimizer-state quantization. Not supported yet (default: False)
+        quantize: Enables grouped optimizer-state quantization for Triton training
+            (default: False)
         stochastic_rounding: Reserved for FlashOptim stochastic rounding. Not supported yet
             (default: False)
         foreach: Removed; True raises ValueError
@@ -112,16 +124,25 @@ class SGD(OptimiOptimizer):
         state: dict[Tensor, Any],
         param: Tensor,
         effective_flash: FlashPrecision | None,
+        effective_quantize: bool,
         effective_kahan: bool,
     ):
         if "exp_avg" not in state:
             if group["dampening"] and group["torch_init"]:
-                state["exp_avg"] = param.grad.detach().clone()
+                exp_avg = param.grad.detach().clone()
                 # PyTorch initializes the momentum buffer with the gradient after l2 weight decay
                 if group["weight_decay"] != 0 and not group["decouple_lr"] and not group["decouple_wd"]:
-                    state["exp_avg"].add_(param, alpha=group["weight_decay"])
+                    exp_avg.add_(param, alpha=group["weight_decay"])
+                if effective_quantize:
+                    state["exp_avg"], state["exp_avg_scales"] = init_quantized_state(param, MOMENTUM_STATE)
+                    quantize_state_(exp_avg, state["exp_avg"], state["exp_avg_scales"], MOMENTUM_STATE)
+                else:
+                    state["exp_avg"] = exp_avg
             elif group["momentum"] != 0:
-                state["exp_avg"] = torch.zeros_like(param, memory_format=torch.preserve_format)
+                if effective_quantize:
+                    state["exp_avg"], state["exp_avg_scales"] = init_quantized_state(param, MOMENTUM_STATE)
+                else:
+                    state["exp_avg"] = torch.zeros_like(param, memory_format=torch.preserve_format)
             elif group["triton"]:
                 state["exp_avg"] = torch.zeros(1, dtype=param.dtype, device=param.device)
             else:
@@ -144,6 +165,7 @@ class SGD(OptimiOptimizer):
         params: list[Tensor],
         grads: list[Tensor],
         exp_avgs: list[Tensor],
+        exp_avg_scales: list[Tensor | None],
         kahan_comps: list[Tensor],
         flash_comps: list[Tensor | None],
     ):
@@ -165,19 +187,38 @@ class SGD(OptimiOptimizer):
             if group["triton"] is None:
                 group["triton"] = _default_to_triton(params)
 
-        effective_flashes = resolve_effective_flash(params, grads, group["flash"], group["triton"], _default_to_triton(params))
+        triton_supported = _default_to_triton(params)
+        if group["quantize"]:
+            validate_quantized_state_support(params, grads, group["triton"], triton_supported)
+
+        effective_flashes = resolve_effective_flash(params, grads, group["flash"], group["triton"], triton_supported)
         any_effective_flash = any(flash is not None for flash in effective_flashes)
         for param, state, effective_flash in zip(params, states, effective_flashes):
+            effective_quantize = bool(group["quantize"] and group["momentum"] != 0)
             effective_kahan = (
                 not any_effective_flash
+                and not effective_quantize
                 and (group["kahan_sum"] or group["kahan_sum"] is None)
                 and param.dtype in [torch.float16, torch.bfloat16]
             )
-            self._init_state(group, state, param, effective_flash, effective_kahan)
+            self._init_state(group, state, param, effective_flash, effective_quantize, effective_kahan)
 
             exp_avgs.append(state["exp_avg"])
+            exp_avg_scales.append(state.get("exp_avg_scales"))
             kahan_comps.append(state["kahan_comp"])
             flash_comps.append(state["flash_comp"] if effective_flash is not None else None)
+
+    def state_dict(self):
+        """Returns optimizer state with quantized states dequantized."""
+        if any(group["quantize"] for group in self.param_groups):
+            return export_quantized_state_dict(self, _QUANTIZED_STATES)
+        return super().state_dict()
+
+    def load_state_dict(self, state_dict):
+        """Loads optimizer state and re-quantizes state for quantized groups."""
+        super().load_state_dict(state_dict)
+        restore_integer_state_(self, state_dict, ("flash_comp",))
+        quantize_loaded_state_(self, _QUANTIZED_STATES)
 
     @torch.no_grad()
     def step(self, closure: Callable | None = None, param: Tensor | None = None):
@@ -197,8 +238,8 @@ class SGD(OptimiOptimizer):
 
         if param is None:
             for group in self.param_groups:
-                params, grads, exp_avgs, kahan_comps, flash_comps = [], [], [], [], []
-                self._init_group(group, params, grads, exp_avgs, kahan_comps, flash_comps)
+                params, grads, exp_avgs, exp_avg_scales, kahan_comps, flash_comps = [], [], [], [], [], []
+                self._init_group(group, params, grads, exp_avgs, exp_avg_scales, kahan_comps, flash_comps)
                 if not params:
                     continue
                 effective_kahan = any(
@@ -209,6 +250,7 @@ class SGD(OptimiOptimizer):
                     params=params,
                     grads=grads,
                     exp_avgs=exp_avgs,
+                    exp_avg_scales=exp_avg_scales,
                     kahan_comps=kahan_comps,
                     flash_comps=flash_comps,
                     lr=group["lr"],
@@ -232,18 +274,30 @@ class SGD(OptimiOptimizer):
             if group["triton"] is None:
                 group["triton"] = _default_to_triton([param])
             triton_supported = _default_to_triton([param])
+            if group["quantize"]:
+                validate_quantized_state_support([param], [param.grad], group["triton"], triton_supported)
             effective_flash = resolve_effective_flash([param], [param.grad], group["flash"], group["triton"], triton_supported)[0]
+            effective_quantize = bool(group["quantize"] and group["momentum"] != 0)
             effective_kahan = (
                 effective_flash is None
+                and not effective_quantize
                 and (group["kahan_sum"] or group["kahan_sum"] is None)
                 and param.dtype in [torch.float16, torch.bfloat16]
             )
-            self._init_state(group, state, param, effective_flash=effective_flash, effective_kahan=effective_kahan)
+            self._init_state(
+                group,
+                state,
+                param,
+                effective_flash=effective_flash,
+                effective_quantize=effective_quantize,
+                effective_kahan=effective_kahan,
+            )
 
             sgd(
                 params=param,
                 grads=param.grad,
                 exp_avgs=state["exp_avg"],
+                exp_avg_scales=state.get("exp_avg_scales"),
                 kahan_comps=state["kahan_comp"],
                 flash_comps=state["flash_comp"] if effective_flash is not None else None,
                 lr=group["lr"],
@@ -271,6 +325,7 @@ def sgd(
     exp_avgs: list[Tensor | None] | Tensor | None,
     kahan_comps: list[Tensor | None] | Tensor | None = None,
     flash_comps: list[Tensor | None] | Tensor | None = None,
+    exp_avg_scales: list[Tensor | None] | Tensor | None = None,
     *,
     lr: float,
     momentum: float,
@@ -295,6 +350,7 @@ def sgd(
         params: Parameter(s) to update
         grads: Paramete(s) gradients
         exp_avgs: Momentum buffer(s)
+        exp_avg_scales: Quantized momentum buffer scales
         kahan_comps: Kahan summation compensation(s)
         flash_comps: FlashOptim parameter compensations
         lr: Learning rate
@@ -305,7 +361,7 @@ def sgd(
         decouple_lr: Apply fully decoupled weight decay
         max_lr: Maximum scheduled learning rate for `decouple_lr`
         kahan_sum: Enables Kahan summation for low precision `params`
-        quantize: Reserved for optimizer-state quantization
+        quantize: Enables grouped optimizer-state quantization
         stochastic_rounding: Reserved for FlashOptim stochastic rounding
         foreach: Removed; True raises ValueError
         triton: Enables the faster Triton implementation
@@ -322,8 +378,6 @@ def sgd(
     if kahan_comps is None:
         kahan_comps = [None] * len(params)
 
-    if quantize:
-        raise ValueError("quantize=True is not supported until the quantization milestone.")
     if stochastic_rounding:
         raise ValueError("stochastic_rounding=True is not supported until the stochastic rounding milestone.")
     if foreach:
@@ -331,7 +385,7 @@ def sgd(
 
     use_flash_impl = False
     if gradient_release:
-        use_flash_impl = flash_comps is not None
+        use_flash_impl = flash_comps is not None or quantize
         if use_flash_impl and not triton:
             raise ValueError("FlashOptim training support requires triton=True")
         if triton:
@@ -340,9 +394,11 @@ def sgd(
             func = _single_param_sgd
     else:
         if triton:
-            use_flash_impl = flash_comps is not None and any(flash_comp is not None for flash_comp in flash_comps)
+            use_flash_impl = quantize or (flash_comps is not None and any(flash_comp is not None for flash_comp in flash_comps))
             func = _triton_sgd_flash if use_flash_impl else _triton_sgd
         else:
+            if quantize:
+                raise ValueError("FlashOptim training support requires triton=True")
             if flash_comps is not None and any(flash_comp is not None for flash_comp in flash_comps):
                 raise ValueError("FlashOptim training support requires triton=True")
             func = _single_sgd
@@ -352,6 +408,7 @@ def sgd(
         grads,
         exp_avgs,
         kahan_comps,
+        exp_avg_scales=exp_avg_scales,
         flash_comps=flash_comps,
         lr=lr,
         momentum=momentum,
@@ -359,6 +416,7 @@ def sgd(
         dampening=dampening,
         decouple_wd=(decouple_wd or decouple_lr),
         kahan_sum=kahan_sum,
+        quantize_state=quantize and momentum != 0.0,
         update_parameters=(not optimizer_accumulation),
     )
 
@@ -574,6 +632,7 @@ if HAS_TRITON:
         param_ptr,
         grad_ptr,
         exp_avg_ptr,
+        exp_avg_scale_ptr,
         flash_ptr,
         lr,
         momentum,
@@ -614,7 +673,12 @@ if HAS_TRITON:
                 grad = grad + param_fp32 * weight_decay
 
         if do_momentum:
-            exp_avg = tl.load(exp_avg_ptr + offsets, mask=mask).to(tl.float32)
+            if quantize_state:
+                exp_avg_scale = tl.load(exp_avg_scale_ptr + pid)
+                exp_avg_q = tl.load(exp_avg_ptr + offsets, mask=mask, other=0).to(tl.float32) / 127.0
+                exp_avg = exp_avg_q / (2.0 - tl.abs(exp_avg_q)) * exp_avg_scale
+            else:
+                exp_avg = tl.load(exp_avg_ptr + offsets, mask=mask).to(tl.float32)
             if dampening:
                 exp_avg = tl.fma(exp_avg, momentum, (1.0 - momentum) * grad)
             else:
@@ -633,7 +697,17 @@ if HAS_TRITON:
                 tl.store(flash_ptr + offsets, flash_comp, mask=mask)
 
         if do_momentum:
-            tl.store(exp_avg_ptr + offsets, tl.cast(exp_avg, param.dtype), mask=mask)
+            if quantize_state:
+                exp_avg_abs = tl.abs(exp_avg)
+                exp_avg_scale = tl.maximum(tl.max(tl.where(mask, exp_avg_abs, 0.0), axis=0), 1.0e-12)
+                exp_avg_q = exp_avg / exp_avg_scale
+                exp_avg_q = 2.0 * exp_avg_q / (1.0 + tl.abs(exp_avg_q))
+                exp_avg_q = exp_avg_q * 127.0
+                exp_avg_q = tl.where(exp_avg_q >= 0.0, tl.floor(exp_avg_q + 0.5), -tl.floor(-exp_avg_q + 0.5))
+                tl.store(exp_avg_ptr + offsets, exp_avg_q.to(tl.int8), mask=mask)
+                tl.store(exp_avg_scale_ptr + pid, exp_avg_scale)
+            else:
+                tl.store(exp_avg_ptr + offsets, tl.cast(exp_avg, param.dtype), mask=mask)
 
     def _triton_sgd_flash(
         params: list[Tensor],
@@ -641,6 +715,7 @@ if HAS_TRITON:
         exp_avgs: list[Tensor],
         kahan_comps: list[Tensor],
         *,
+        exp_avg_scales: list[Tensor | None],
         flash_comps: list[Tensor | None],
         lr: float,
         momentum: float,
@@ -648,16 +723,18 @@ if HAS_TRITON:
         dampening: bool,
         decouple_wd: bool,
         kahan_sum: bool,
+        quantize_state: bool,
         update_parameters: bool,
         **kwargs,
     ):
         for i, param in enumerate(params):
             grad = grads[i]
             exp_avg = exp_avgs[i]
+            exp_avg_scale = exp_avg_scales[i] if quantize_state else param
             flash_comp = flash_comps[i]
 
             n_elements = param.numel()
-            block_size = _get_triton_block_size(n_elements)
+            block_size = 32 if quantize_state else _get_triton_block_size(n_elements)
             grid = (triton.cdiv(n_elements, block_size),)
             use_flash = flash_comp is not None
             flash_ptr = flash_comp if use_flash else param
@@ -670,6 +747,7 @@ if HAS_TRITON:
                     param_ptr=param,
                     grad_ptr=grad,
                     exp_avg_ptr=exp_avg,
+                    exp_avg_scale_ptr=exp_avg_scale,
                     flash_ptr=flash_ptr,
                     lr=lr,
                     momentum=momentum,
@@ -679,7 +757,7 @@ if HAS_TRITON:
                     do_weight_decay=weight_decay != 0.0,
                     do_momentum=momentum != 0.0,
                     use_flash=use_flash,
-                    quantize_state=False,
+                    quantize_state=quantize_state,
                     stochastic_rounding=False,
                     update_parameters=update_parameters,
                     n_elements=n_elements,
@@ -736,6 +814,7 @@ if HAS_TRITON:
         exp_avg: Tensor,
         kahan_comp: Tensor,
         *,
+        exp_avg_scales: Tensor | None,
         flash_comps: Tensor,
         lr: float,
         momentum: float,
@@ -743,14 +822,17 @@ if HAS_TRITON:
         dampening: bool,
         decouple_wd: bool,
         kahan_sum: bool,
+        quantize_state: bool,
         update_parameters: bool,
         **kwargs,
     ):
         n_elements = param.numel()
-        block_size = _get_triton_block_size(n_elements)
+        block_size = 32 if quantize_state else _get_triton_block_size(n_elements)
         grid = (triton.cdiv(n_elements, block_size),)
-        flash_t = tl.int16 if flash_comps.dtype == torch.int16 else tl.int8
-        signed_max = 32767 if flash_comps.dtype == torch.int16 else 127
+        use_flash = flash_comps is not None
+        flash_ptr = flash_comps if use_flash else param
+        flash_t = tl.int16 if use_flash and flash_comps.dtype == torch.int16 else tl.int8
+        signed_max = 32767 if use_flash and flash_comps.dtype == torch.int16 else 127
         mantissa_bits = 10 if param.dtype == torch.float16 else 7
 
         with _device_guard(param):
@@ -758,7 +840,8 @@ if HAS_TRITON:
                 param_ptr=param,
                 grad_ptr=grad,
                 exp_avg_ptr=exp_avg,
-                flash_ptr=flash_comps,
+                exp_avg_scale_ptr=exp_avg_scales if quantize_state else param,
+                flash_ptr=flash_ptr,
                 lr=lr,
                 momentum=momentum,
                 weight_decay=weight_decay,
@@ -766,8 +849,8 @@ if HAS_TRITON:
                 decouple_wd=decouple_wd,
                 do_weight_decay=weight_decay != 0.0,
                 do_momentum=momentum != 0.0,
-                use_flash=True,
-                quantize_state=False,
+                use_flash=use_flash,
+                quantize_state=quantize_state,
                 stochastic_rounding=False,
                 update_parameters=update_parameters,
                 n_elements=n_elements,

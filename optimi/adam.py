@@ -22,9 +22,23 @@ from torch import Tensor
 
 from optimi.flash import FlashPrecision, init_flash_state, resolve_effective_flash
 from optimi.optimizer import OptimiOptimizer
+from optimi.quantization import (
+    ADAM_VARIANCE_STATE,
+    MOMENTUM_STATE,
+    export_quantized_state_dict,
+    init_quantized_state,
+    quantize_loaded_state_,
+    restore_integer_state_,
+    validate_quantized_state_support,
+)
 from optimi.utils import HAS_TRITON, _default_to_triton, _device_guard, _get_triton_block_size, debias_beta
 
 __all__ = ["Adam", "adam"]
+
+_QUANTIZED_STATES = {
+    "exp_avg": ("exp_avg_scales", MOMENTUM_STATE),
+    "exp_avg_sq": ("exp_avg_sq_scales", ADAM_VARIANCE_STATE),
+}
 
 
 class Adam(OptimiOptimizer):
@@ -46,7 +60,8 @@ class Adam(OptimiOptimizer):
             parameters (default: None)
         flash: Enables FlashOptim parameter compensation for low precision Triton training
             (default: None)
-        quantize: Reserved for optimizer-state quantization. Not supported yet (default: False)
+        quantize: Enables grouped optimizer-state quantization for Triton training
+            (default: False)
         stochastic_rounding: Reserved for FlashOptim stochastic rounding. Not supported yet
             (default: False)
         foreach: Removed; True raises ValueError
@@ -108,11 +123,16 @@ class Adam(OptimiOptimizer):
         state: dict[Tensor, Any],
         param: Tensor,
         effective_flash: FlashPrecision | None,
+        effective_quantize: bool,
         effective_kahan: bool,
     ):
         if "exp_avg" not in state:
-            state["exp_avg"] = torch.zeros_like(param, memory_format=torch.preserve_format)
-            state["exp_avg_sq"] = torch.zeros_like(param, memory_format=torch.preserve_format)
+            if effective_quantize:
+                state["exp_avg"], state["exp_avg_scales"] = init_quantized_state(param, MOMENTUM_STATE)
+                state["exp_avg_sq"], state["exp_avg_sq_scales"] = init_quantized_state(param, ADAM_VARIANCE_STATE)
+            else:
+                state["exp_avg"] = torch.zeros_like(param, memory_format=torch.preserve_format)
+                state["exp_avg_sq"] = torch.zeros_like(param, memory_format=torch.preserve_format)
 
             if group["gradient_release"]:
                 state["step"] = torch.tensor(0, dtype=torch.int32)
@@ -135,6 +155,8 @@ class Adam(OptimiOptimizer):
         grads: list[Tensor],
         exp_avgs: list[Tensor],
         exp_avg_sqs: list[Tensor],
+        exp_avg_scales: list[Tensor | None],
+        exp_avg_sq_scales: list[Tensor | None],
         kahan_comps: list[Tensor],
         flash_comps: list[Tensor | None],
     ):
@@ -157,11 +179,17 @@ class Adam(OptimiOptimizer):
             if group["triton"] is None:
                 group["triton"] = _default_to_triton(params)
 
-        effective_flashes = resolve_effective_flash(params, grads, group["flash"], group["triton"], _default_to_triton(params))
+        triton_supported = _default_to_triton(params)
+        if group["quantize"]:
+            validate_quantized_state_support(params, grads, group["triton"], triton_supported)
+
+        effective_flashes = resolve_effective_flash(params, grads, group["flash"], group["triton"], triton_supported)
         any_effective_flash = any(flash is not None for flash in effective_flashes)
         for param, state, effective_flash in zip(params, states, effective_flashes):
+            effective_quantize = bool(group["quantize"])
             effective_kahan = (
                 not any_effective_flash
+                and not effective_quantize
                 and (group["kahan_sum"] or group["kahan_sum"] is None)
                 and param.dtype
                 in [
@@ -169,12 +197,26 @@ class Adam(OptimiOptimizer):
                     torch.bfloat16,
                 ]
             )
-            self._init_state(group, state, param, effective_flash, effective_kahan)
+            self._init_state(group, state, param, effective_flash, effective_quantize, effective_kahan)
 
             exp_avgs.append(state["exp_avg"])
             exp_avg_sqs.append(state["exp_avg_sq"])
+            exp_avg_scales.append(state.get("exp_avg_scales"))
+            exp_avg_sq_scales.append(state.get("exp_avg_sq_scales"))
             kahan_comps.append(state["kahan_comp"])
             flash_comps.append(state["flash_comp"] if effective_flash is not None else None)
+
+    def state_dict(self):
+        """Returns optimizer state with quantized states dequantized."""
+        if any(group["quantize"] for group in self.param_groups):
+            return export_quantized_state_dict(self, _QUANTIZED_STATES)
+        return super().state_dict()
+
+    def load_state_dict(self, state_dict):
+        """Loads optimizer state and re-quantizes state for quantized groups."""
+        super().load_state_dict(state_dict)
+        restore_integer_state_(self, state_dict, ("flash_comp",))
+        quantize_loaded_state_(self, _QUANTIZED_STATES)
 
     @torch.no_grad()
     def step(self, closure: Callable | None = None, param: Tensor | None = None):
@@ -194,8 +236,17 @@ class Adam(OptimiOptimizer):
 
         if param is None:
             for group in self.param_groups:
-                params, grads, exp_avgs, exp_avg_sqs, kahan_comps, flash_comps = [], [], [], [], [], []
-                self._init_group(group, params, grads, exp_avgs, exp_avg_sqs, kahan_comps, flash_comps)
+                params, grads, exp_avgs, exp_avg_sqs, exp_avg_scales, exp_avg_sq_scales, kahan_comps, flash_comps = (
+                    [],
+                    [],
+                    [],
+                    [],
+                    [],
+                    [],
+                    [],
+                    [],
+                )
+                self._init_group(group, params, grads, exp_avgs, exp_avg_sqs, exp_avg_scales, exp_avg_sq_scales, kahan_comps, flash_comps)
                 if not params:
                     continue
                 effective_kahan = any(
@@ -207,6 +258,8 @@ class Adam(OptimiOptimizer):
                     grads=grads,
                     exp_avgs=exp_avgs,
                     exp_avg_sqs=exp_avg_sqs,
+                    exp_avg_scales=exp_avg_scales,
+                    exp_avg_sq_scales=exp_avg_sq_scales,
                     kahan_comps=kahan_comps,
                     flash_comps=flash_comps,
                     lr=group["lr"],
@@ -232,19 +285,32 @@ class Adam(OptimiOptimizer):
             if group["triton"] is None:
                 group["triton"] = _default_to_triton([param])
             triton_supported = _default_to_triton([param])
+            if group["quantize"]:
+                validate_quantized_state_support([param], [param.grad], group["triton"], triton_supported)
             effective_flash = resolve_effective_flash([param], [param.grad], group["flash"], group["triton"], triton_supported)[0]
+            effective_quantize = bool(group["quantize"])
             effective_kahan = (
                 effective_flash is None
+                and not effective_quantize
                 and (group["kahan_sum"] or group["kahan_sum"] is None)
                 and param.dtype in [torch.float16, torch.bfloat16]
             )
-            self._init_state(group, state, param, effective_flash=effective_flash, effective_kahan=effective_kahan)
+            self._init_state(
+                group,
+                state,
+                param,
+                effective_flash=effective_flash,
+                effective_quantize=effective_quantize,
+                effective_kahan=effective_kahan,
+            )
 
             adam(
                 params=param,
                 grads=param.grad,
                 exp_avgs=state["exp_avg"],
                 exp_avg_sqs=state["exp_avg_sq"],
+                exp_avg_scales=state.get("exp_avg_scales"),
+                exp_avg_sq_scales=state.get("exp_avg_sq_scales"),
                 kahan_comps=state["kahan_comp"],
                 flash_comps=state["flash_comp"] if effective_flash is not None else None,
                 lr=group["lr"],
@@ -275,6 +341,8 @@ def adam(
     exp_avg_sqs: list[Tensor],
     kahan_comps: list[Tensor | None] | None = None,
     flash_comps: list[Tensor | None] | Tensor | None = None,
+    exp_avg_scales: list[Tensor | None] | Tensor | None = None,
+    exp_avg_sq_scales: list[Tensor | None] | Tensor | None = None,
     *,
     lr: float,
     beta1: float,
@@ -302,6 +370,8 @@ def adam(
         grads: Parameter gradients
         exp_avgs: Gradient moving averages
         exp_avg_sqs: Squared gradient moving averages
+        exp_avg_scales: Quantized gradient moving average scales
+        exp_avg_sq_scales: Quantized squared gradient moving average scales
         kahan_comps: Kahan summation compensations
         flash_comps: FlashOptim parameter compensations
         lr: Learning rate
@@ -314,7 +384,7 @@ def adam(
         decouple_lr: Apply fully decoupled weight decay
         max_lr: Maximum scheduled learning rate for `decouple_lr`
         kahan_sum: Enables Kahan summation for low precision parameters
-        quantize: Reserved for optimizer-state quantization
+        quantize: Enables grouped optimizer-state quantization
         stochastic_rounding: Reserved for FlashOptim stochastic rounding
         foreach: Removed; True raises ValueError
         triton: Enables the faster Triton implementation
@@ -339,8 +409,6 @@ def adam(
     if kahan_comps is None:
         kahan_comps = [None] * len(params)
 
-    if quantize:
-        raise ValueError("quantize=True is not supported until the quantization milestone.")
     if stochastic_rounding:
         raise ValueError("stochastic_rounding=True is not supported until the stochastic rounding milestone.")
     if foreach:
@@ -348,7 +416,7 @@ def adam(
 
     use_flash_impl = False
     if gradient_release:
-        use_flash_impl = flash_comps is not None
+        use_flash_impl = flash_comps is not None or quantize
         if use_flash_impl and not triton:
             raise ValueError("FlashOptim training support requires triton=True")
         if triton:
@@ -357,9 +425,11 @@ def adam(
             func = _single_param_adam
     else:
         if triton:
-            use_flash_impl = flash_comps is not None and any(flash_comp is not None for flash_comp in flash_comps)
+            use_flash_impl = quantize or (flash_comps is not None and any(flash_comp is not None for flash_comp in flash_comps))
             func = _triton_adam_flash if use_flash_impl else _triton_adam
         else:
+            if quantize:
+                raise ValueError("FlashOptim training support requires triton=True")
             if flash_comps is not None and any(flash_comp is not None for flash_comp in flash_comps):
                 raise ValueError("FlashOptim training support requires triton=True")
             func = _single_adam
@@ -370,6 +440,8 @@ def adam(
         exp_avgs,
         exp_avg_sqs,
         kahan_comps,
+        exp_avg_scales=exp_avg_scales,
+        exp_avg_sq_scales=exp_avg_sq_scales,
         flash_comps=flash_comps,
         lr=lr,
         beta1_hat=beta1_hat,
@@ -380,6 +452,7 @@ def adam(
         eps=eps,
         decouple_wd=(decouple_wd or decouple_lr),
         kahan_sum=kahan_sum,
+        quantize_state=quantize,
         update_parameters=(not optimizer_accumulation),
     )
 
@@ -609,6 +682,8 @@ if HAS_TRITON:
         grad_ptr,
         exp_avg_ptr,
         exp_avg_sq_ptr,
+        exp_avg_scale_ptr,
+        exp_avg_sq_scale_ptr,
         flash_ptr,
         lr,
         beta1_hat,
@@ -636,8 +711,18 @@ if HAS_TRITON:
 
         param = tl.load(param_ptr + offsets, mask=mask)
         grad = tl.load(grad_ptr + offsets, mask=mask).to(tl.float32)
-        exp_avg = tl.load(exp_avg_ptr + offsets, mask=mask).to(tl.float32)
-        exp_avg_sq = tl.load(exp_avg_sq_ptr + offsets, mask=mask).to(tl.float32)
+        if quantize_state:
+            exp_avg_scale = tl.load(exp_avg_scale_ptr + pid)
+            exp_avg_q = tl.load(exp_avg_ptr + offsets, mask=mask, other=0).to(tl.float32) / 127.0
+            exp_avg = exp_avg_q / (2.0 - tl.abs(exp_avg_q)) * exp_avg_scale
+
+            exp_avg_sq_scale = tl.load(exp_avg_sq_scale_ptr + pid)
+            exp_avg_sq_q = tl.load(exp_avg_sq_ptr + offsets, mask=mask, other=0).to(tl.float32) / 255.0
+            exp_avg_sq = exp_avg_sq_q * exp_avg_sq_scale
+            exp_avg_sq = exp_avg_sq * exp_avg_sq
+        else:
+            exp_avg = tl.load(exp_avg_ptr + offsets, mask=mask).to(tl.float32)
+            exp_avg_sq = tl.load(exp_avg_sq_ptr + offsets, mask=mask).to(tl.float32)
 
         if use_flash:
             flash_comp = tl.load(flash_ptr + offsets, mask=mask, other=0)
@@ -666,8 +751,24 @@ if HAS_TRITON:
                 flash_comp = _compute_flash(param_fp32, param, flash_t, mantissa_bits, signed_max)
                 tl.store(flash_ptr + offsets, flash_comp, mask=mask)
 
-        tl.store(exp_avg_ptr + offsets, tl.cast(exp_avg, param.dtype), mask=mask)
-        tl.store(exp_avg_sq_ptr + offsets, tl.cast(exp_avg_sq, param.dtype), mask=mask)
+        if quantize_state:
+            exp_avg_abs = tl.abs(exp_avg)
+            exp_avg_scale = tl.maximum(tl.max(tl.where(mask, exp_avg_abs, 0.0), axis=0), 1.0e-12)
+            exp_avg_q = exp_avg / exp_avg_scale
+            exp_avg_q = 2.0 * exp_avg_q / (1.0 + tl.abs(exp_avg_q))
+            exp_avg_q = exp_avg_q * 127.0
+            exp_avg_q = tl.where(exp_avg_q >= 0.0, tl.floor(exp_avg_q + 0.5), -tl.floor(-exp_avg_q + 0.5))
+            tl.store(exp_avg_ptr + offsets, exp_avg_q.to(tl.int8), mask=mask)
+            tl.store(exp_avg_scale_ptr + pid, exp_avg_scale)
+
+            exp_avg_sq_sqrt = tl.sqrt(exp_avg_sq)
+            exp_avg_sq_scale = tl.maximum(tl.max(tl.where(mask, exp_avg_sq_sqrt, 0.0), axis=0), 1.0e-12)
+            exp_avg_sq_q = tl.floor((exp_avg_sq_sqrt / exp_avg_sq_scale) * 255.0 + 0.5)
+            tl.store(exp_avg_sq_ptr + offsets, exp_avg_sq_q.to(tl.uint8), mask=mask)
+            tl.store(exp_avg_sq_scale_ptr + pid, exp_avg_sq_scale)
+        else:
+            tl.store(exp_avg_ptr + offsets, tl.cast(exp_avg, param.dtype), mask=mask)
+            tl.store(exp_avg_sq_ptr + offsets, tl.cast(exp_avg_sq, param.dtype), mask=mask)
 
     def _triton_adam_flash(
         params: list[Tensor],
@@ -676,6 +777,8 @@ if HAS_TRITON:
         exp_avg_sqs: list[Tensor],
         kahan_comps: list[Tensor | None],
         *,
+        exp_avg_scales: list[Tensor | None],
+        exp_avg_sq_scales: list[Tensor | None],
         flash_comps: list[Tensor | None],
         lr: float,
         beta1_hat: float,
@@ -686,6 +789,7 @@ if HAS_TRITON:
         eps: float,
         decouple_wd: bool,
         kahan_sum: bool,
+        quantize_state: bool,
         update_parameters: bool,
         **kwargs,
     ):
@@ -693,10 +797,12 @@ if HAS_TRITON:
             grad = grads[i]
             exp_avg = exp_avgs[i]
             exp_avg_sq = exp_avg_sqs[i]
+            exp_avg_scale = exp_avg_scales[i] if quantize_state else param
+            exp_avg_sq_scale = exp_avg_sq_scales[i] if quantize_state else param
             flash_comp = flash_comps[i]
 
             n_elements = param.numel()
-            block_size = _get_triton_block_size(n_elements)
+            block_size = 32 if quantize_state else _get_triton_block_size(n_elements)
             grid = (triton.cdiv(n_elements, block_size),)
             use_flash = flash_comp is not None
             flash_ptr = flash_comp if use_flash else param
@@ -710,6 +816,8 @@ if HAS_TRITON:
                     grad_ptr=grad,
                     exp_avg_ptr=exp_avg,
                     exp_avg_sq_ptr=exp_avg_sq,
+                    exp_avg_scale_ptr=exp_avg_scale,
+                    exp_avg_sq_scale_ptr=exp_avg_sq_scale,
                     flash_ptr=flash_ptr,
                     lr=lr,
                     beta1_hat=beta1_hat,
@@ -720,7 +828,7 @@ if HAS_TRITON:
                     eps=eps,
                     do_weight_decay=weight_decay != 0.0,
                     use_flash=use_flash,
-                    quantize_state=False,
+                    quantize_state=quantize_state,
                     stochastic_rounding=False,
                     decouple_wd=decouple_wd,
                     update_parameters=update_parameters,
@@ -785,6 +893,8 @@ if HAS_TRITON:
         exp_avg_sq: Tensor,
         kahan_comp: Tensor | None,
         *,
+        exp_avg_scales: Tensor | None,
+        exp_avg_sq_scales: Tensor | None,
         flash_comps: Tensor,
         lr: float,
         beta1_hat: float,
@@ -795,14 +905,17 @@ if HAS_TRITON:
         eps: float,
         decouple_wd: bool,
         kahan_sum: bool,
+        quantize_state: bool,
         update_parameters: bool,
         **kwargs,
     ):
         n_elements = param.numel()
-        block_size = _get_triton_block_size(n_elements)
+        block_size = 32 if quantize_state else _get_triton_block_size(n_elements)
         grid = (triton.cdiv(n_elements, block_size),)
-        flash_t = tl.int16 if flash_comps.dtype == torch.int16 else tl.int8
-        signed_max = 32767 if flash_comps.dtype == torch.int16 else 127
+        use_flash = flash_comps is not None
+        flash_ptr = flash_comps if use_flash else param
+        flash_t = tl.int16 if use_flash and flash_comps.dtype == torch.int16 else tl.int8
+        signed_max = 32767 if use_flash and flash_comps.dtype == torch.int16 else 127
         mantissa_bits = 10 if param.dtype == torch.float16 else 7
 
         with _device_guard(param):
@@ -811,7 +924,9 @@ if HAS_TRITON:
                 grad_ptr=grad,
                 exp_avg_ptr=exp_avg,
                 exp_avg_sq_ptr=exp_avg_sq,
-                flash_ptr=flash_comps,
+                exp_avg_scale_ptr=exp_avg_scales if quantize_state else param,
+                exp_avg_sq_scale_ptr=exp_avg_sq_scales if quantize_state else param,
+                flash_ptr=flash_ptr,
                 lr=lr,
                 beta1_hat=beta1_hat,
                 beta1_comp=beta1_comp,
@@ -820,8 +935,8 @@ if HAS_TRITON:
                 weight_decay=weight_decay,
                 eps=eps,
                 do_weight_decay=weight_decay != 0.0,
-                use_flash=True,
-                quantize_state=False,
+                use_flash=use_flash,
+                quantize_state=quantize_state,
                 stochastic_rounding=False,
                 decouple_wd=decouple_wd,
                 update_parameters=update_parameters,

@@ -106,4 +106,22 @@ TESTS = [
             )
         ),
     ),
+    OptTest(
+        name="sgd_quantize_momentum",
+        optimi_class=optimi.SGD,
+        optimi_params=SGDParams(momentum=0.9, quantize=True),
+        reference_class=torch.optim.SGD,
+        reference_params=SGDParams(momentum=0.9),
+        skip_tests=[OptTestType.gradient_release, OptTestType.accumulation],
+        triton_only=True,
+        only_dtypes=[torch.bfloat16],
+        spec=TestSpec(
+            normal=NormalSpec(
+                iterations_gpu=8,
+                tolerance={
+                    torch.bfloat16: Tolerance(atol=2e-2, rtol=2e-2, max_error_rate=0.08),
+                },
+            )
+        ),
+    ),
 ]

@@ -18,11 +18,9 @@ def _validate_flash_options(options: dict[str, Any]):
     options["flash"] = None if precision is None else precision.value
     explicit_flash = uses_flash(options["flash"])
 
-    if options["quantize"]:
-        raise ValueError("quantize=True is not supported until the quantization milestone.")
     if options["stochastic_rounding"]:
         raise ValueError("stochastic_rounding=True is not supported until the stochastic rounding milestone.")
-    if explicit_flash and options.get("triton") is not True:
+    if (explicit_flash or options["quantize"]) and options.get("triton") is not True:
         raise ValueError("FlashOptim training support requires triton=True")
     if options["kahan_sum"] is True and explicit_flash:
         raise ValueError("kahan_sum=True and flash cannot be used together")

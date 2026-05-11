@@ -59,4 +59,22 @@ TESTS = [
             )
         ),
     ),
+    OptTest(
+        name="lion_quantize",
+        optimi_class=optimi.Lion,
+        optimi_params=LionParams(quantize=True),
+        reference_class=reference_lion.Lion,
+        reference_params=LionParams(),
+        skip_tests=[OptTestType.gradient_release, OptTestType.accumulation],
+        triton_only=True,
+        only_dtypes=[torch.bfloat16],
+        spec=TestSpec(
+            normal=NormalSpec(
+                iterations_gpu=8,
+                tolerance={
+                    torch.bfloat16: Tolerance(atol=2e-2, rtol=2e-2, max_error_rate=0.08),
+                },
+            )
+        ),
+    ),
 ]

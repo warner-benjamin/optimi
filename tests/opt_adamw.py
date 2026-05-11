@@ -6,7 +6,7 @@ import optimi
 import torch
 from tests import reference
 
-from .config import BaseParams, OptTest
+from .config import BaseParams, NormalSpec, OptTest, OptTestType, TestSpec, Tolerance
 
 
 @dataclass
@@ -24,3 +24,24 @@ BASE = OptTest(
     reference_params=AdamWParams(),
     fully_decoupled_reference=reference.DecoupledAdamW,
 )
+
+TESTS = [
+    OptTest(
+        name="adamw_quantize",
+        optimi_class=optimi.AdamW,
+        optimi_params=AdamWParams(quantize=True),
+        reference_class=torch.optim.AdamW,
+        reference_params=AdamWParams(),
+        skip_tests=[OptTestType.gradient_release, OptTestType.accumulation],
+        triton_only=True,
+        only_dtypes=[torch.bfloat16],
+        spec=TestSpec(
+            normal=NormalSpec(
+                iterations_gpu=8,
+                tolerance={
+                    torch.bfloat16: Tolerance(atol=2e-2, rtol=2e-2, max_error_rate=0.08),
+                },
+            )
+        ),
+    ),
+]
