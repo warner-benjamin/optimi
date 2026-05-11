@@ -525,6 +525,7 @@ if HAS_TRITON:
     import triton.language as tl
 
     from optimi.flash import _apply_flash, _compute_flash
+    from optimi.quantization import GROUP_SIZE, _dequantize_momentum, _quantize_momentum
 
     @triton.jit
     def _lion_kernel(
@@ -654,6 +655,7 @@ if HAS_TRITON:
         step_int,
         n_elements,
         BLOCK_SIZE: tl.constexpr,
+        GROUP_SIZE: tl.constexpr,
         mantissa_bits: tl.constexpr,
         flash_t: tl.constexpr,
         signed_max: tl.constexpr,
@@ -662,13 +664,19 @@ if HAS_TRITON:
         block_start = pid * BLOCK_SIZE
         offsets = block_start + tl.arange(0, BLOCK_SIZE)
         mask = offsets < n_elements
+        NUM_GROUPS: tl.constexpr = BLOCK_SIZE // GROUP_SIZE
+        scale_offsets = block_start // GROUP_SIZE + tl.arange(0, NUM_GROUPS)
+        scale_mask = scale_offsets < tl.cdiv(n_elements, GROUP_SIZE)
 
         param = tl.load(param_ptr + offsets, mask=mask)
         grad = tl.load(grad_ptr + offsets, mask=mask).to(tl.float32)
         if quantize_state:
-            exp_avg_scale = tl.load(exp_avg_scale_ptr + pid)
-            exp_avg_q = tl.load(exp_avg_ptr + offsets, mask=mask, other=0).to(tl.float32) / 127.0
-            exp_avg = exp_avg_q / (2.0 - tl.abs(exp_avg_q)) * exp_avg_scale
+            exp_avg = _dequantize_momentum(
+                tl.load(exp_avg_ptr + offsets, mask=mask, other=0),
+                tl.load(exp_avg_scale_ptr + scale_offsets, mask=scale_mask, other=1.0),
+                NUM_GROUPS,
+                GROUP_SIZE,
+            )
         else:
             exp_avg = tl.load(exp_avg_ptr + offsets, mask=mask).to(tl.float32)
 
@@ -710,14 +718,9 @@ if HAS_TRITON:
                 tl.store(flash_ptr + offsets, flash_comp, mask=mask)
 
         if quantize_state:
-            exp_avg_abs = tl.abs(exp_avg)
-            exp_avg_scale = tl.maximum(tl.max(tl.where(mask, exp_avg_abs, 0.0), axis=0), 1.0e-12)
-            exp_avg_q = exp_avg / exp_avg_scale
-            exp_avg_q = 2.0 * exp_avg_q / (1.0 + tl.abs(exp_avg_q))
-            exp_avg_q = exp_avg_q * 127.0
-            exp_avg_q = tl.where(exp_avg_q >= 0.0, tl.floor(exp_avg_q + 0.5), -tl.floor(-exp_avg_q + 0.5))
+            exp_avg_q, exp_avg_scale = _quantize_momentum(exp_avg, mask, NUM_GROUPS, GROUP_SIZE)
             tl.store(exp_avg_ptr + offsets, exp_avg_q.to(tl.int8), mask=mask)
-            tl.store(exp_avg_scale_ptr + pid, exp_avg_scale)
+            tl.store(exp_avg_scale_ptr + scale_offsets, exp_avg_scale, mask=scale_mask)
         else:
             tl.store(exp_avg_ptr + offsets, tl.cast(exp_avg, param.dtype), mask=mask)
 
@@ -725,8 +728,7 @@ if HAS_TRITON:
         params: list[Tensor],
         grads: list[Tensor],
         exp_avgs: list[Tensor],
-        kahan_comps: list[Tensor],
-        *,
+        *_,
         exp_avg_scales: list[Tensor | None],
         flash_comps: list[Tensor | None],
         stochastic_seeds: list[Tensor | None],
@@ -734,7 +736,6 @@ if HAS_TRITON:
         beta1_comp: float,
         beta2_comp: float,
         weight_decay: float,
-        kahan_sum: bool,
         quantize_state: bool,
         stochastic_rounding: bool,
         step_int: int,
@@ -749,7 +750,7 @@ if HAS_TRITON:
             stochastic_seed = stochastic_seeds[i].item() if stochastic_rounding else 0
 
             n_elements = param.numel()
-            block_size = 32 if quantize_state else _get_triton_block_size(n_elements)
+            block_size = _get_triton_block_size(n_elements)
             grid = (triton.cdiv(n_elements, block_size),)
             use_flash = flash_comp is not None
             flash_ptr = flash_comp if use_flash else param
@@ -777,6 +778,7 @@ if HAS_TRITON:
                     step_int=step_int,
                     n_elements=n_elements,
                     BLOCK_SIZE=block_size,
+                    GROUP_SIZE=GROUP_SIZE,
                     mantissa_bits=mantissa_bits,
                     flash_t=flash_t,
                     signed_max=signed_max,
@@ -824,8 +826,7 @@ if HAS_TRITON:
         param: Tensor,
         grad: Tensor,
         exp_avg: Tensor,
-        kahan_comp: Tensor | None,
-        *,
+        *_,
         exp_avg_scales: Tensor | None,
         flash_comps: Tensor,
         stochastic_seeds: Tensor | None,
@@ -833,7 +834,6 @@ if HAS_TRITON:
         beta1_comp: float,
         beta2_comp: float,
         weight_decay: float,
-        kahan_sum: bool,
         quantize_state: bool,
         stochastic_rounding: bool,
         step_int: int,
@@ -841,7 +841,7 @@ if HAS_TRITON:
         **kwargs,
     ):
         n_elements = param.numel()
-        block_size = 32 if quantize_state else _get_triton_block_size(n_elements)
+        block_size = _get_triton_block_size(n_elements)
         grid = (triton.cdiv(n_elements, block_size),)
         use_flash = flash_comps is not None
         flash_ptr = flash_comps if use_flash else param
@@ -870,6 +870,7 @@ if HAS_TRITON:
                 step_int=step_int,
                 n_elements=n_elements,
                 BLOCK_SIZE=block_size,
+                GROUP_SIZE=GROUP_SIZE,
                 mantissa_bits=mantissa_bits,
                 flash_t=flash_t,
                 signed_max=signed_max,

@@ -7,6 +7,8 @@ import torch
 from torch import Tensor
 from torch.optim.optimizer import Optimizer
 
+from optimi.utils import HAS_TRITON
+
 GROUP_SIZE = 32
 SCALE_SENTINEL = 1e-12
 COMPRESSED_STATE_DICT_KEY = "optimi_compressed_state"
@@ -161,3 +163,42 @@ def reject_compressed_state_dict(state_dict):
     """Reject optimi compressed checkpoints in regular load_state_dict."""
     if COMPRESSED_STATE_DICT_KEY in state_dict:
         raise ValueError("Compressed optimi checkpoints must be loaded with optimi.load_compressed_state_dict.")
+
+
+if HAS_TRITON:
+    import triton
+    import triton.language as tl
+
+    @triton.jit
+    def _dequantize_momentum(qstate, scales, NUM_GROUPS: tl.constexpr, GROUP_SIZE: tl.constexpr):
+        groups = qstate.to(tl.float32).reshape((NUM_GROUPS, GROUP_SIZE))
+        normalized = groups / 127.0
+        state = normalized / (2.0 - tl.abs(normalized)) * scales.to(tl.float32)[:, None]
+        return state.reshape((NUM_GROUPS * GROUP_SIZE,))
+
+    @triton.jit
+    def _quantize_momentum(state, mask, NUM_GROUPS: tl.constexpr, GROUP_SIZE: tl.constexpr):
+        groups = state.reshape((NUM_GROUPS, GROUP_SIZE))
+        group_mask = mask.reshape((NUM_GROUPS, GROUP_SIZE))
+        state_abs = tl.abs(groups)
+        scale = tl.maximum(tl.max(tl.where(group_mask, state_abs, 0.0), axis=1), 1.0e-12)
+        normalized = groups / scale[:, None]
+        qstate = 2.0 * normalized / (1.0 + tl.abs(normalized))
+        qstate = qstate * 127.0
+        qstate = tl.where(qstate >= 0.0, tl.floor(qstate + 0.5), -tl.floor(-qstate + 0.5))
+        return qstate.reshape((NUM_GROUPS * GROUP_SIZE,)).to(tl.int8), scale
+
+    @triton.jit
+    def _dequantize_variance(qstate, scales, NUM_GROUPS: tl.constexpr, GROUP_SIZE: tl.constexpr):
+        groups = qstate.to(tl.float32).reshape((NUM_GROUPS, GROUP_SIZE))
+        normalized = groups / 255.0
+        state = normalized * scales.to(tl.float32)[:, None]
+        return (state * state).reshape((NUM_GROUPS * GROUP_SIZE,))
+
+    @triton.jit
+    def _quantize_variance(state, mask, NUM_GROUPS: tl.constexpr, GROUP_SIZE: tl.constexpr):
+        state_sqrt = tl.sqrt(state).reshape((NUM_GROUPS, GROUP_SIZE))
+        group_mask = mask.reshape((NUM_GROUPS, GROUP_SIZE))
+        scale = tl.maximum(tl.max(tl.where(group_mask, state_sqrt, 0.0), axis=1), 1.0e-12)
+        qstate = tl.floor((state_sqrt / scale[:, None]) * 255.0 + 0.5)
+        return qstate.reshape((NUM_GROUPS * GROUP_SIZE,)).to(tl.uint8), scale
