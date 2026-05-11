@@ -6,7 +6,32 @@ import torch
 from torch import Tensor
 from torch.optim.optimizer import Optimizer
 
+from optimi.flash import FlashPrecision, normalize_flash_precision, uses_flash
 from optimi.utils import HAS_TRITON, MIN_TORCH_2_1, MIN_TORCH_2_6
+
+
+def _validate_flash_options(options: dict[str, Any]):
+    if "flash" not in options:
+        return
+
+    precision = normalize_flash_precision(options["flash"])
+    options["flash"] = None if precision is None else precision.value
+    explicit_flash = uses_flash(options["flash"])
+
+    if options["quantize"]:
+        raise ValueError("quantize=True is not supported until the quantization milestone.")
+    if options["stochastic_rounding"]:
+        raise ValueError("stochastic_rounding=True is not supported until the stochastic rounding milestone.")
+    if explicit_flash and options.get("triton") is not True:
+        raise ValueError("FlashOptim training support requires triton=True")
+    if options["gradient_release"] and explicit_flash:
+        raise ValueError("FlashOptim training support does not support gradient_release=True yet.")
+    if options["gradient_release"] and options["flash"] is None:
+        options["flash"] = FlashPrecision.OFF.value
+    if options["kahan_sum"] is True and explicit_flash:
+        raise ValueError("kahan_sum=True and flash cannot be used together")
+    if options["kahan_sum"] is True and options["flash"] is None:
+        options["flash"] = FlashPrecision.OFF.value
 
 
 class OptimiOptimizer(Optimizer):
@@ -21,6 +46,8 @@ class OptimiOptimizer(Optimizer):
             defaults["max_lr"] = defaults["lr"]
         if defaults["max_lr"] is not None and not 0.0 <= defaults["max_lr"]:
             raise ValueError(f"Invalid maximum learning rate: max_lr={defaults['max_lr']}")
+
+        _validate_flash_options(defaults)
 
         if defaults["foreach"]:
             raise ValueError("foreach=True is no longer supported. Set foreach=False or use triton=True.")
@@ -41,6 +68,7 @@ class OptimiOptimizer(Optimizer):
             if group["foreach"]:
                 raise ValueError("foreach=True is no longer supported. Set foreach=False or use triton=True.")
             group["foreach"] = False
+            _validate_flash_options(group)
 
         # Warn if any parameter group uses a potentially high weight decay when fully
         # decoupling LR from weight decay (decouple_lr=True). Aggregate and warn once.

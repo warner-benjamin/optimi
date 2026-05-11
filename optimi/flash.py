@@ -11,9 +11,11 @@ from optimi.utils import HAS_TRITON
 __all__ = [
     "FlashPrecision",
     "compute_flash_state",
+    "effective_flash_precision",
     "init_flash_state",
     "normalize_flash_precision",
     "reconstruct_fp32_param",
+    "uses_flash",
 ]
 
 
@@ -66,6 +68,23 @@ def _flash_state_dtype(flash: bool | str | FlashPrecision | None) -> torch.dtype
     if precision in (None, FlashPrecision.OFF):
         return None
     return _FLASH_STATE_DTYPES[precision]
+
+
+def uses_flash(flash: bool | str | FlashPrecision | None) -> bool:
+    """Return whether a requested flash precision explicitly enables compensation."""
+    return normalize_flash_precision(flash) not in (None, FlashPrecision.OFF)
+
+
+def effective_flash_precision(param: Tensor, flash: bool | str | FlashPrecision | None, triton: bool) -> FlashPrecision | None:
+    """Resolve per-parameter FlashOptim precision after execution-path selection."""
+    if param.dtype not in _MANTISSA_BITS:
+        return None
+    precision = normalize_flash_precision(flash)
+    if precision is None:
+        return FlashPrecision.EFFECTIVE_24 if triton else None
+    if precision == FlashPrecision.OFF:
+        return None
+    return precision
 
 
 def _check_narrow_param(param: Tensor):

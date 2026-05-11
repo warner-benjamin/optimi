@@ -20,6 +20,7 @@ from typing import Any
 import torch
 from torch import Tensor
 
+from optimi.flash import FlashPrecision, effective_flash_precision, init_flash_state, uses_flash
 from optimi.optimizer import OptimiOptimizer
 from optimi.utils import HAS_TRITON, _default_to_triton, _device_guard, _get_triton_block_size, debias_beta
 
@@ -43,6 +44,11 @@ class Adam(OptimiOptimizer):
         kahan_sum: Enables Kahan summation for more accurate parameter updates when training in low
             precision (float16 or bfloat16). If unspecified, automatically applies for low precision
             parameters (default: None)
+        flash: Enables FlashOptim parameter compensation for low precision Triton training
+            (default: None)
+        quantize: Reserved for optimizer-state quantization. Not supported yet (default: False)
+        stochastic_rounding: Reserved for FlashOptim stochastic rounding. Not supported yet
+            (default: False)
         foreach: Removed; True raises ValueError
         triton: Enables Triton implementation. If unspecified, tries to use Triton as it is
             significantly faster than the for-loop implementation (default: None)
@@ -62,6 +68,9 @@ class Adam(OptimiOptimizer):
         decouple_lr: bool = False,
         max_lr: float | None = None,
         kahan_sum: bool | None = None,
+        flash: bool | str | FlashPrecision | None = None,
+        quantize: bool = False,
+        stochastic_rounding: bool = False,
         foreach: bool | None = None,
         triton: bool | None = None,
         gradient_release: bool = False,
@@ -83,6 +92,9 @@ class Adam(OptimiOptimizer):
             decouple_lr=decouple_lr,
             max_lr=max_lr,
             kahan_sum=kahan_sum,
+            flash=flash,
+            quantize=quantize,
+            stochastic_rounding=stochastic_rounding,
             foreach=foreach,
             triton=triton,
             gradient_release=gradient_release,
@@ -90,21 +102,31 @@ class Adam(OptimiOptimizer):
         )
         super().__init__(params, defaults)
 
-    def _init_state(self, group: dict[str, Any], state: dict[Tensor, Any], param: Tensor):
-        if "kahan_comp" not in state:
+    def _init_state(
+        self,
+        group: dict[str, Any],
+        state: dict[Tensor, Any],
+        param: Tensor,
+        effective_flash: FlashPrecision | None,
+        effective_kahan: bool,
+    ):
+        if "exp_avg" not in state:
             state["exp_avg"] = torch.zeros_like(param, memory_format=torch.preserve_format)
             state["exp_avg_sq"] = torch.zeros_like(param, memory_format=torch.preserve_format)
 
-            if (group["kahan_sum"] or group["kahan_sum"] is None) and param.dtype in [torch.float16, torch.bfloat16]:
+            if group["gradient_release"]:
+                state["step"] = torch.tensor(0, dtype=torch.int32)
+
+        if effective_flash is not None and "flash_comp" not in state:
+            state["flash_comp"] = init_flash_state(param, effective_flash)
+
+        if "kahan_comp" not in state:
+            if effective_kahan:
                 state["kahan_comp"] = torch.zeros_like(param, memory_format=torch.preserve_format)
-                group["kahan_sum"] = True
             elif group["triton"]:
                 state["kahan_comp"] = torch.zeros(1, dtype=torch.uint8, device=param.device)
             else:
                 state["kahan_comp"] = None
-
-            if group["gradient_release"]:
-                state["step"] = torch.tensor(0, dtype=torch.int32)
 
     def _init_group(
         self,
@@ -114,20 +136,16 @@ class Adam(OptimiOptimizer):
         exp_avgs: list[Tensor],
         exp_avg_sqs: list[Tensor],
         kahan_comps: list[Tensor],
+        flash_comps: list[Tensor | None],
     ):
+        states = []
         for p in group["params"]:
             if p.grad is None:
                 continue
 
             params.append(p)
             grads.append(p.grad)
-            state = self.state[p]
-
-            self._init_state(group, state, p)
-
-            exp_avgs.append(state["exp_avg"])
-            exp_avg_sqs.append(state["exp_avg_sq"])
-            kahan_comps.append(state["kahan_comp"])
+            states.append(self.state[p])
 
         if not params:
             return
@@ -138,6 +156,35 @@ class Adam(OptimiOptimizer):
 
             if group["triton"] is None:
                 group["triton"] = _default_to_triton(params)
+
+        if uses_flash(group["flash"]) and not _default_to_triton(params):
+            raise ValueError("FlashOptim training support requires Triton-supported GPU/XPU parameters.")
+
+        effective_flashes = [effective_flash_precision(p, group["flash"], group["triton"]) for p in params]
+        if uses_flash(group["flash"]):
+            if not any(flash is not None for flash in effective_flashes):
+                raise ValueError("flash was enabled, but no bf16 or fp16 parameters were found.")
+            for p, grad, effective_flash in zip(params, grads, effective_flashes):
+                if effective_flash is not None and (not p.is_contiguous() or not grad.is_contiguous()):
+                    raise ValueError("FlashOptim training support requires contiguous parameters and gradients.")
+
+        any_effective_flash = any(flash is not None for flash in effective_flashes)
+        for param, state, effective_flash in zip(params, states, effective_flashes):
+            effective_kahan = (
+                not any_effective_flash
+                and (group["kahan_sum"] or group["kahan_sum"] is None)
+                and param.dtype
+                in [
+                    torch.float16,
+                    torch.bfloat16,
+                ]
+            )
+            self._init_state(group, state, param, effective_flash, effective_kahan)
+
+            exp_avgs.append(state["exp_avg"])
+            exp_avg_sqs.append(state["exp_avg_sq"])
+            kahan_comps.append(state["kahan_comp"])
+            flash_comps.append(state["flash_comp"] if effective_flash is not None else None)
 
     @torch.no_grad()
     def step(self, closure: Callable | None = None, param: Tensor | None = None):
@@ -157,10 +204,13 @@ class Adam(OptimiOptimizer):
 
         if param is None:
             for group in self.param_groups:
-                params, grads, exp_avgs, exp_avg_sqs, kahan_comps = [], [], [], [], []
-                self._init_group(group, params, grads, exp_avgs, exp_avg_sqs, kahan_comps)
+                params, grads, exp_avgs, exp_avg_sqs, kahan_comps, flash_comps = [], [], [], [], [], []
+                self._init_group(group, params, grads, exp_avgs, exp_avg_sqs, kahan_comps, flash_comps)
                 if not params:
                     continue
+                effective_kahan = any(
+                    kahan_comp is not None and kahan_comp.shape == param.shape for kahan_comp, param in zip(kahan_comps, params)
+                )
 
                 adam(
                     params=params,
@@ -168,6 +218,7 @@ class Adam(OptimiOptimizer):
                     exp_avgs=exp_avgs,
                     exp_avg_sqs=exp_avg_sqs,
                     kahan_comps=kahan_comps,
+                    flash_comps=flash_comps,
                     lr=group["lr"],
                     beta1=group["beta1"],
                     beta2=group["beta2"],
@@ -177,7 +228,9 @@ class Adam(OptimiOptimizer):
                     decouple_wd=group["decouple_wd"],
                     decouple_lr=group["decouple_lr"],
                     max_lr=group["max_lr"],
-                    kahan_sum=group["kahan_sum"],
+                    kahan_sum=effective_kahan,
+                    quantize=group["quantize"],
+                    stochastic_rounding=group["stochastic_rounding"],
                     foreach=group["foreach"],
                     triton=group["triton"],
                     gradient_release=False,
@@ -186,7 +239,8 @@ class Adam(OptimiOptimizer):
         else:
             state = self.state[param]
             group = state["group"]
-            self._init_state(group, state, param)
+            effective_kahan = (group["kahan_sum"] or group["kahan_sum"] is None) and param.dtype in [torch.float16, torch.bfloat16]
+            self._init_state(group, state, param, effective_flash=None, effective_kahan=effective_kahan)
 
             adam(
                 params=param,
@@ -194,6 +248,7 @@ class Adam(OptimiOptimizer):
                 exp_avgs=state["exp_avg"],
                 exp_avg_sqs=state["exp_avg_sq"],
                 kahan_comps=state["kahan_comp"],
+                flash_comps=None,
                 lr=group["lr"],
                 beta1=group["beta1"],
                 beta2=group["beta2"],
@@ -203,7 +258,9 @@ class Adam(OptimiOptimizer):
                 decouple_wd=group["decouple_wd"],
                 decouple_lr=group["decouple_lr"],
                 max_lr=group["max_lr"],
-                kahan_sum=group["kahan_sum"],
+                kahan_sum=effective_kahan,
+                quantize=group["quantize"],
+                stochastic_rounding=group["stochastic_rounding"],
                 foreach=False,
                 triton=group["triton"],
                 gradient_release=True,
@@ -219,6 +276,7 @@ def adam(
     exp_avgs: list[Tensor],
     exp_avg_sqs: list[Tensor],
     kahan_comps: list[Tensor | None] | None = None,
+    flash_comps: list[Tensor | None] | Tensor | None = None,
     *,
     lr: float,
     beta1: float,
@@ -230,6 +288,8 @@ def adam(
     decouple_lr: bool = False,
     max_lr: float | None = None,
     kahan_sum: bool = False,
+    quantize: bool = False,
+    stochastic_rounding: bool = False,
     foreach: bool = False,
     triton: bool = False,
     gradient_release: bool = False,
@@ -245,6 +305,7 @@ def adam(
         exp_avgs: Gradient moving averages
         exp_avg_sqs: Squared gradient moving averages
         kahan_comps: Kahan summation compensations
+        flash_comps: FlashOptim parameter compensations
         lr: Learning rate
         beta1: Gradient moving average coefficient
         beta2: Squared gradient moving average coefficient
@@ -255,6 +316,8 @@ def adam(
         decouple_lr: Apply fully decoupled weight decay
         max_lr: Maximum scheduled learning rate for `decouple_lr`
         kahan_sum: Enables Kahan summation for low precision parameters
+        quantize: Reserved for optimizer-state quantization
+        stochastic_rounding: Reserved for FlashOptim stochastic rounding
         foreach: Removed; True raises ValueError
         triton: Enables the faster Triton implementation
         gradient_release: Fuses optimizer step as part of the parameter's backward pass
@@ -278,18 +341,30 @@ def adam(
     if kahan_comps is None:
         kahan_comps = [None] * len(params)
 
+    if quantize:
+        raise ValueError("quantize=True is not supported until the quantization milestone.")
+    if stochastic_rounding:
+        raise ValueError("stochastic_rounding=True is not supported until the stochastic rounding milestone.")
     if foreach:
         raise ValueError("foreach=True is no longer supported. Set foreach=False or use triton=True.")
 
     if gradient_release:
+        if flash_comps is not None:
+            raise ValueError("FlashOptim training support does not support gradient_release=True yet.")
         if triton:
             func = _single_param_triton_adam
         else:
             func = _single_param_adam
     else:
         if triton:
-            func = _triton_adam
+            func = (
+                _triton_adam_flash
+                if flash_comps is not None and any(flash_comp is not None for flash_comp in flash_comps)
+                else _triton_adam
+            )
         else:
+            if flash_comps is not None and any(flash_comp is not None for flash_comp in flash_comps):
+                raise ValueError("FlashOptim training support requires triton=True")
             func = _single_adam
 
     func(
@@ -298,6 +373,7 @@ def adam(
         exp_avgs,
         exp_avg_sqs,
         kahan_comps,
+        flash_comps=flash_comps,
         lr=lr,
         beta1_hat=beta1_hat,
         beta1_comp=beta1_comp,
@@ -401,6 +477,8 @@ def _single_param_adam(
 if HAS_TRITON:
     import triton
     import triton.language as tl
+
+    from optimi.flash import _apply_flash, _compute_flash
 
     @triton.jit
     def _adam_kernel(
@@ -525,6 +603,133 @@ if HAS_TRITON:
                     update_parameters=True,
                     n_elements=n_elements,
                     BLOCK_SIZE=block_size,
+                )
+
+    @triton.jit
+    def _adam_flash_kernel(
+        param_ptr,
+        grad_ptr,
+        exp_avg_ptr,
+        exp_avg_sq_ptr,
+        flash_ptr,
+        lr,
+        beta1_hat,
+        beta1_comp,
+        beta2_hat,
+        beta2_comp,
+        weight_decay,
+        eps,
+        do_weight_decay: tl.constexpr,
+        use_flash: tl.constexpr,
+        quantize_state: tl.constexpr,
+        stochastic_rounding: tl.constexpr,
+        decouple_wd: tl.constexpr,
+        update_parameters: tl.constexpr,
+        n_elements,
+        BLOCK_SIZE: tl.constexpr,
+        mantissa_bits: tl.constexpr,
+        flash_t: tl.constexpr,
+        signed_max: tl.constexpr,
+    ):
+        pid = tl.program_id(0)
+        block_start = pid * BLOCK_SIZE
+        offsets = block_start + tl.arange(0, BLOCK_SIZE)
+        mask = offsets < n_elements
+
+        param = tl.load(param_ptr + offsets, mask=mask)
+        grad = tl.load(grad_ptr + offsets, mask=mask).to(tl.float32)
+        exp_avg = tl.load(exp_avg_ptr + offsets, mask=mask).to(tl.float32)
+        exp_avg_sq = tl.load(exp_avg_sq_ptr + offsets, mask=mask).to(tl.float32)
+
+        if use_flash:
+            flash_comp = tl.load(flash_ptr + offsets, mask=mask, other=0)
+            param_fp32 = _apply_flash(param, flash_comp, mantissa_bits, signed_max)
+        else:
+            param_fp32 = param.to(tl.float32)
+
+        # decoupled weight decay, fully decoupled weight decay, or L2 weight decay
+        if do_weight_decay and update_parameters:
+            if decouple_wd:
+                param_fp32 = param_fp32 * weight_decay
+            else:
+                grad = grad + param_fp32 * weight_decay
+
+        # update gradient moving averages
+        exp_avg = tl.fma(exp_avg, beta1_hat, beta1_comp * grad)
+        exp_avg_sq = tl.fma(exp_avg_sq, beta2_hat, beta2_comp * grad * grad)
+
+        if update_parameters:
+            # Adam step
+            param_fp32 = param_fp32 - (lr * exp_avg / (tl.sqrt(exp_avg_sq) + eps))
+            param = param_fp32.to(param.dtype)
+            tl.store(param_ptr + offsets, param, mask=mask)
+
+            if use_flash:
+                flash_comp = _compute_flash(param_fp32, param, flash_t, mantissa_bits, signed_max)
+                tl.store(flash_ptr + offsets, flash_comp, mask=mask)
+
+        tl.store(exp_avg_ptr + offsets, tl.cast(exp_avg, param.dtype), mask=mask)
+        tl.store(exp_avg_sq_ptr + offsets, tl.cast(exp_avg_sq, param.dtype), mask=mask)
+
+    def _triton_adam_flash(
+        params: list[Tensor],
+        grads: list[Tensor],
+        exp_avgs: list[Tensor],
+        exp_avg_sqs: list[Tensor],
+        kahan_comps: list[Tensor | None],
+        *,
+        flash_comps: list[Tensor | None],
+        lr: float,
+        beta1_hat: float,
+        beta1_comp: float,
+        beta2_hat: float,
+        beta2_comp: float,
+        weight_decay: float,
+        eps: float,
+        decouple_wd: bool,
+        kahan_sum: bool,
+        update_parameters: bool,
+    ):
+        for i, param in enumerate(params):
+            grad = grads[i]
+            exp_avg = exp_avgs[i]
+            exp_avg_sq = exp_avg_sqs[i]
+            flash_comp = flash_comps[i]
+
+            n_elements = param.numel()
+            block_size = _get_triton_block_size(n_elements)
+            grid = (triton.cdiv(n_elements, block_size),)
+            use_flash = flash_comp is not None
+            flash_ptr = flash_comp if use_flash else param
+            flash_t = tl.int16 if use_flash and flash_comp.dtype == torch.int16 else tl.int8
+            signed_max = 32767 if use_flash and flash_comp.dtype == torch.int16 else 127
+            mantissa_bits = 10 if param.dtype == torch.float16 else 7
+
+            with _device_guard(param):
+                _adam_flash_kernel[grid](
+                    param_ptr=param,
+                    grad_ptr=grad,
+                    exp_avg_ptr=exp_avg,
+                    exp_avg_sq_ptr=exp_avg_sq,
+                    flash_ptr=flash_ptr,
+                    lr=lr,
+                    beta1_hat=beta1_hat,
+                    beta1_comp=beta1_comp,
+                    beta2_hat=beta2_hat,
+                    beta2_comp=beta2_comp,
+                    weight_decay=weight_decay,
+                    eps=eps,
+                    do_weight_decay=weight_decay != 0.0,
+                    use_flash=use_flash,
+                    quantize_state=False,
+                    stochastic_rounding=False,
+                    decouple_wd=decouple_wd,
+                    update_parameters=update_parameters,
+                    n_elements=n_elements,
+                    BLOCK_SIZE=block_size,
+                    mantissa_bits=mantissa_bits,
+                    flash_t=flash_t,
+                    signed_max=signed_max,
                 )
 
     def _single_param_triton_adam(
