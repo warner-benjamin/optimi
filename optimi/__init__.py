@@ -3,6 +3,7 @@ __version__ = "0.3.3"
 from .adam import Adam, adam
 from .adamw import AdamW, adamw
 from .adan import Adan, adan
+from .flash import FlashPrecision
 from .gradientrelease import prepare_for_gradient_release, remove_gradient_release
 from .lion import Lion, lion
 from .radam import RAdam, radam
