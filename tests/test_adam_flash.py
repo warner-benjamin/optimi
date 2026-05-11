@@ -33,11 +33,11 @@ def test_adam_flash_rejects_kahan_sum_conflict(optimizer_cls):
 
 
 @pytest.mark.parametrize("optimizer_cls", [Adam, AdamW])
-def test_adam_flash_reserved_options_raise(optimizer_cls):
+def test_adam_stochastic_rounding_requires_triton_true(optimizer_cls):
     param = torch.nn.Parameter(torch.ones(2, dtype=torch.bfloat16))
 
-    with pytest.raises(ValueError, match="not supported until"):
-        optimizer_cls([param], lr=1e-3, triton=True, stochastic_rounding=True)
+    with pytest.raises(ValueError, match="requires triton=True"):
+        optimizer_cls([param], lr=1e-3, triton=False, stochastic_rounding=True)
 
 
 def test_adam_explicit_flash_rejects_cpu_before_state_init():
@@ -121,6 +121,45 @@ def test_adam_functional_flash_rejects_non_triton():
         )
 
 
+def test_adam_functional_stochastic_rounding_requires_flash_comp():
+    param = torch.ones(2, dtype=torch.bfloat16)
+    grad = torch.ones_like(param)
+    exp_avg = torch.zeros_like(param)
+    exp_avg_sq = torch.zeros_like(param)
+    step = torch.tensor(0, dtype=torch.int32)
+
+    with pytest.raises(ValueError, match="requires FlashOptim parameter compensation"):
+        adam(
+            params=[param],
+            grads=[grad],
+            exp_avgs=[exp_avg],
+            exp_avg_sqs=[exp_avg_sq],
+            lr=1e-3,
+            beta1=0.9,
+            beta2=0.99,
+            weight_decay=0.0,
+            eps=1e-6,
+            step=step,
+            decouple_wd=True,
+            stochastic_rounding=True,
+            triton=True,
+        )
+
+
+@pytest.mark.parametrize("optimizer_cls", [Adam, AdamW])
+def test_adam_stochastic_rounding_rejects_non_contiguous_auto_flash(optimizer_cls):
+    device = _triton_device()
+    if device is None:
+        pytest.skip("requires a Triton-supported device")
+
+    param = torch.nn.Parameter(torch.ones((4, 4), device=device, dtype=torch.bfloat16).t())
+    param.grad = torch.ones_like(param)
+    optimizer = optimizer_cls([param], lr=1e-3, stochastic_rounding=True, triton=True)
+
+    with pytest.raises(ValueError, match="requires contiguous"):
+        optimizer.step()
+
+
 @pytest.mark.parametrize("optimizer_cls", [Adam, AdamW])
 def test_adam_flash_gradient_release_step_initializes_flash_comp(optimizer_cls):
     device = _triton_device()
@@ -156,3 +195,23 @@ def test_adam_flash_gradient_release_accumulation_skips_param_and_flash_update()
     assert torch.equal(param, before_param)
     assert torch.equal(optimizer.state[param]["flash_comp"], before_flash)
     assert not torch.equal(optimizer.state[param]["exp_avg"], before_exp_avg)
+
+
+@pytest.mark.parametrize("optimizer_cls", [Adam, AdamW])
+def test_adam_stochastic_rounding_reproducible_with_manual_seed(optimizer_cls):
+    device = _triton_device()
+    if device is None:
+        pytest.skip("requires a Triton-supported device")
+
+    initial = torch.ones(257, device=device, dtype=torch.bfloat16)
+    grad = torch.full_like(initial, 0.25)
+    flash_states = []
+    for _ in range(2):
+        torch.manual_seed(123)
+        param = torch.nn.Parameter(initial.clone())
+        param.grad = grad.clone()
+        optimizer = optimizer_cls([param], lr=1e-3, flash=True, stochastic_rounding=True, triton=True)
+        optimizer.step()
+        flash_states.append(optimizer.state[param]["flash_comp"].clone())
+
+    assert torch.equal(flash_states[0], flash_states[1])

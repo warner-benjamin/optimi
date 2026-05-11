@@ -24,7 +24,13 @@ from typing import Any
 import torch
 from torch import Tensor
 
-from optimi.flash import FlashPrecision, init_flash_state, resolve_effective_flash
+from optimi.flash import (
+    FlashPrecision,
+    init_flash_state,
+    init_stochastic_state,
+    resolve_effective_flash,
+    validate_stochastic_rounding,
+)
 from optimi.optimizer import OptimiOptimizer
 from optimi.quantization import (
     MOMENTUM_STATE,
@@ -66,7 +72,7 @@ class SGD(OptimiOptimizer):
             (default: None)
         quantize: Enables grouped optimizer-state quantization for Triton training
             (default: False)
-        stochastic_rounding: Reserved for FlashOptim stochastic rounding. Not supported yet
+        stochastic_rounding: Enables stochastic rounding for FlashOptim correction bits
             (default: False)
         foreach: Removed; True raises ValueError
         triton: Enables Triton implementation. If unspecified, tries to use Triton as it is
@@ -147,9 +153,13 @@ class SGD(OptimiOptimizer):
                 state["exp_avg"] = torch.zeros(1, dtype=param.dtype, device=param.device)
             else:
                 state["exp_avg"] = None
+            if group["gradient_release"] and group["stochastic_rounding"]:
+                state["step"] = torch.tensor(0, dtype=torch.int32)
 
         if effective_flash is not None and "flash_comp" not in state:
             state["flash_comp"] = init_flash_state(param, effective_flash)
+        if effective_flash is not None and group["stochastic_rounding"] and "stochastic_seed" not in state:
+            state["stochastic_seed"] = init_stochastic_state(param)
 
         if "kahan_comp" not in state:
             if effective_kahan:
@@ -168,6 +178,7 @@ class SGD(OptimiOptimizer):
         exp_avg_scales: list[Tensor | None],
         kahan_comps: list[Tensor],
         flash_comps: list[Tensor | None],
+        stochastic_seeds: list[Tensor | None],
     ):
         states = []
         for p in group["params"]:
@@ -186,13 +197,24 @@ class SGD(OptimiOptimizer):
 
             if group["triton"] is None:
                 group["triton"] = _default_to_triton(params)
+            if group["stochastic_rounding"]:
+                group["step"] = torch.tensor(0, dtype=torch.int32)
 
         triton_supported = _default_to_triton(params)
         if group["quantize"]:
             validate_quantized_state_support(params, grads, group["triton"], triton_supported)
 
-        effective_flashes = resolve_effective_flash(params, grads, group["flash"], group["triton"], triton_supported)
+        effective_flashes = resolve_effective_flash(
+            params,
+            grads,
+            group["flash"],
+            group["triton"],
+            triton_supported,
+            require_contiguous=group["stochastic_rounding"],
+        )
         any_effective_flash = any(flash is not None for flash in effective_flashes)
+        if group["stochastic_rounding"] and not any_effective_flash:
+            raise ValueError("stochastic_rounding=True requires FlashOptim parameter compensation.")
         for param, state, effective_flash in zip(params, states, effective_flashes):
             effective_quantize = bool(group["quantize"] and group["momentum"] != 0)
             effective_kahan = (
@@ -207,6 +229,7 @@ class SGD(OptimiOptimizer):
             exp_avg_scales.append(state.get("exp_avg_scales"))
             kahan_comps.append(state["kahan_comp"])
             flash_comps.append(state["flash_comp"] if effective_flash is not None else None)
+            stochastic_seeds.append(state.get("stochastic_seed") if effective_flash is not None else None)
 
     def state_dict(self):
         """Returns optimizer state with quantized states dequantized."""
@@ -238,8 +261,8 @@ class SGD(OptimiOptimizer):
 
         if param is None:
             for group in self.param_groups:
-                params, grads, exp_avgs, exp_avg_scales, kahan_comps, flash_comps = [], [], [], [], [], []
-                self._init_group(group, params, grads, exp_avgs, exp_avg_scales, kahan_comps, flash_comps)
+                params, grads, exp_avgs, exp_avg_scales, kahan_comps, flash_comps, stochastic_seeds = [], [], [], [], [], [], []
+                self._init_group(group, params, grads, exp_avgs, exp_avg_scales, kahan_comps, flash_comps, stochastic_seeds)
                 if not params:
                     continue
                 effective_kahan = any(
@@ -253,6 +276,7 @@ class SGD(OptimiOptimizer):
                     exp_avg_scales=exp_avg_scales,
                     kahan_comps=kahan_comps,
                     flash_comps=flash_comps,
+                    stochastic_seeds=stochastic_seeds,
                     lr=group["lr"],
                     momentum=group["momentum"],
                     weight_decay=group["weight_decay"],
@@ -260,6 +284,7 @@ class SGD(OptimiOptimizer):
                     decouple_wd=group["decouple_wd"],
                     decouple_lr=group["decouple_lr"],
                     max_lr=group["max_lr"],
+                    step=group.get("step"),
                     kahan_sum=effective_kahan,
                     quantize=group["quantize"],
                     stochastic_rounding=group["stochastic_rounding"],
@@ -276,7 +301,16 @@ class SGD(OptimiOptimizer):
             triton_supported = _default_to_triton([param])
             if group["quantize"]:
                 validate_quantized_state_support([param], [param.grad], group["triton"], triton_supported)
-            effective_flash = resolve_effective_flash([param], [param.grad], group["flash"], group["triton"], triton_supported)[0]
+            effective_flash = resolve_effective_flash(
+                [param],
+                [param.grad],
+                group["flash"],
+                group["triton"],
+                triton_supported,
+                require_contiguous=group["stochastic_rounding"],
+            )[0]
+            if group["stochastic_rounding"] and effective_flash is None:
+                raise ValueError("stochastic_rounding=True requires FlashOptim parameter compensation.")
             effective_quantize = bool(group["quantize"] and group["momentum"] != 0)
             effective_kahan = (
                 effective_flash is None
@@ -300,6 +334,7 @@ class SGD(OptimiOptimizer):
                 exp_avg_scales=state.get("exp_avg_scales"),
                 kahan_comps=state["kahan_comp"],
                 flash_comps=state["flash_comp"] if effective_flash is not None else None,
+                stochastic_seeds=state.get("stochastic_seed") if effective_flash is not None else None,
                 lr=group["lr"],
                 momentum=group["momentum"],
                 weight_decay=group["weight_decay"],
@@ -307,6 +342,7 @@ class SGD(OptimiOptimizer):
                 decouple_wd=group["decouple_wd"],
                 decouple_lr=group["decouple_lr"],
                 max_lr=group["max_lr"],
+                step=state.get("step"),
                 kahan_sum=effective_kahan,
                 quantize=group["quantize"],
                 stochastic_rounding=group["stochastic_rounding"],
@@ -325,6 +361,7 @@ def sgd(
     exp_avgs: list[Tensor | None] | Tensor | None,
     kahan_comps: list[Tensor | None] | Tensor | None = None,
     flash_comps: list[Tensor | None] | Tensor | None = None,
+    stochastic_seeds: list[Tensor | None] | Tensor | None = None,
     exp_avg_scales: list[Tensor | None] | Tensor | None = None,
     *,
     lr: float,
@@ -334,6 +371,7 @@ def sgd(
     decouple_wd: bool,
     decouple_lr: bool = False,
     max_lr: float | None = None,
+    step: Tensor | None = None,
     kahan_sum: bool = False,
     quantize: bool = False,
     stochastic_rounding: bool = False,
@@ -353,6 +391,7 @@ def sgd(
         exp_avg_scales: Quantized momentum buffer scales
         kahan_comps: Kahan summation compensation(s)
         flash_comps: FlashOptim parameter compensations
+        stochastic_seeds: Per-parameter stochastic rounding seeds
         lr: Learning rate
         momentum: Momentum factor
         weight_decay: Weight decay coefficient
@@ -360,9 +399,10 @@ def sgd(
         decouple_wd: Apply decoupled weight decay
         decouple_lr: Apply fully decoupled weight decay
         max_lr: Maximum scheduled learning rate for `decouple_lr`
+        step: Step counter used for stochastic rounding streams
         kahan_sum: Enables Kahan summation for low precision `params`
         quantize: Enables grouped optimizer-state quantization
-        stochastic_rounding: Reserved for FlashOptim stochastic rounding
+        stochastic_rounding: Enables stochastic rounding for FlashOptim correction bits
         foreach: Removed; True raises ValueError
         triton: Enables the faster Triton implementation
         gradient_release: Fuses optimizer step as part of the parameter's backward pass
@@ -378,8 +418,15 @@ def sgd(
     if kahan_comps is None:
         kahan_comps = [None] * len(params)
 
+    validate_stochastic_rounding(stochastic_rounding, flash_comps, triton, gradient_release)
+
     if stochastic_rounding:
-        raise ValueError("stochastic_rounding=True is not supported until the stochastic rounding milestone.")
+        if step is None:
+            raise ValueError("stochastic_rounding=True requires a step counter.")
+        step.add_(1)
+        step_int = step.item()
+    else:
+        step_int = 0
     if foreach:
         raise ValueError("foreach=True is no longer supported. Set foreach=False or use triton=True.")
 
@@ -410,6 +457,7 @@ def sgd(
         kahan_comps,
         exp_avg_scales=exp_avg_scales,
         flash_comps=flash_comps,
+        stochastic_seeds=stochastic_seeds,
         lr=lr,
         momentum=momentum,
         weight_decay=weight_decay,
@@ -417,6 +465,8 @@ def sgd(
         decouple_wd=(decouple_wd or decouple_lr),
         kahan_sum=kahan_sum,
         quantize_state=quantize and momentum != 0.0,
+        stochastic_rounding=stochastic_rounding,
+        step_int=step_int,
         update_parameters=(not optimizer_accumulation),
     )
 
@@ -634,6 +684,7 @@ if HAS_TRITON:
         exp_avg_ptr,
         exp_avg_scale_ptr,
         flash_ptr,
+        stochastic_seed,
         lr,
         momentum,
         weight_decay,
@@ -645,6 +696,7 @@ if HAS_TRITON:
         quantize_state: tl.constexpr,
         stochastic_rounding: tl.constexpr,
         update_parameters: tl.constexpr,
+        step_int,
         n_elements,
         BLOCK_SIZE: tl.constexpr,
         mantissa_bits: tl.constexpr,
@@ -693,7 +745,17 @@ if HAS_TRITON:
             tl.store(param_ptr + offsets, param, mask=mask)
 
             if use_flash:
-                flash_comp = _compute_flash(param_fp32, param, flash_t, mantissa_bits, signed_max)
+                rng_offsets = offsets + step_int * n_elements
+                flash_comp = _compute_flash(
+                    param_fp32,
+                    param,
+                    stochastic_seed,
+                    rng_offsets,
+                    flash_t,
+                    mantissa_bits,
+                    signed_max,
+                    stochastic_rounding,
+                )
                 tl.store(flash_ptr + offsets, flash_comp, mask=mask)
 
         if do_momentum:
@@ -717,6 +779,7 @@ if HAS_TRITON:
         *,
         exp_avg_scales: list[Tensor | None],
         flash_comps: list[Tensor | None],
+        stochastic_seeds: list[Tensor | None],
         lr: float,
         momentum: float,
         weight_decay: float,
@@ -724,6 +787,8 @@ if HAS_TRITON:
         decouple_wd: bool,
         kahan_sum: bool,
         quantize_state: bool,
+        stochastic_rounding: bool,
+        step_int: int,
         update_parameters: bool,
         **kwargs,
     ):
@@ -732,6 +797,7 @@ if HAS_TRITON:
             exp_avg = exp_avgs[i]
             exp_avg_scale = exp_avg_scales[i] if quantize_state else param
             flash_comp = flash_comps[i]
+            stochastic_seed = stochastic_seeds[i].item() if stochastic_rounding else 0
 
             n_elements = param.numel()
             block_size = 32 if quantize_state else _get_triton_block_size(n_elements)
@@ -749,6 +815,7 @@ if HAS_TRITON:
                     exp_avg_ptr=exp_avg,
                     exp_avg_scale_ptr=exp_avg_scale,
                     flash_ptr=flash_ptr,
+                    stochastic_seed=stochastic_seed,
                     lr=lr,
                     momentum=momentum,
                     weight_decay=weight_decay,
@@ -758,8 +825,9 @@ if HAS_TRITON:
                     do_momentum=momentum != 0.0,
                     use_flash=use_flash,
                     quantize_state=quantize_state,
-                    stochastic_rounding=False,
+                    stochastic_rounding=stochastic_rounding,
                     update_parameters=update_parameters,
+                    step_int=step_int,
                     n_elements=n_elements,
                     BLOCK_SIZE=block_size,
                     mantissa_bits=mantissa_bits,
@@ -816,6 +884,7 @@ if HAS_TRITON:
         *,
         exp_avg_scales: Tensor | None,
         flash_comps: Tensor,
+        stochastic_seeds: Tensor | None,
         lr: float,
         momentum: float,
         weight_decay: float,
@@ -823,6 +892,8 @@ if HAS_TRITON:
         decouple_wd: bool,
         kahan_sum: bool,
         quantize_state: bool,
+        stochastic_rounding: bool,
+        step_int: int,
         update_parameters: bool,
         **kwargs,
     ):
@@ -831,6 +902,7 @@ if HAS_TRITON:
         grid = (triton.cdiv(n_elements, block_size),)
         use_flash = flash_comps is not None
         flash_ptr = flash_comps if use_flash else param
+        stochastic_seed = stochastic_seeds.item() if stochastic_rounding else 0
         flash_t = tl.int16 if use_flash and flash_comps.dtype == torch.int16 else tl.int8
         signed_max = 32767 if use_flash and flash_comps.dtype == torch.int16 else 127
         mantissa_bits = 10 if param.dtype == torch.float16 else 7
@@ -842,6 +914,7 @@ if HAS_TRITON:
                 exp_avg_ptr=exp_avg,
                 exp_avg_scale_ptr=exp_avg_scales if quantize_state else param,
                 flash_ptr=flash_ptr,
+                stochastic_seed=stochastic_seed,
                 lr=lr,
                 momentum=momentum,
                 weight_decay=weight_decay,
@@ -851,8 +924,9 @@ if HAS_TRITON:
                 do_momentum=momentum != 0.0,
                 use_flash=use_flash,
                 quantize_state=quantize_state,
-                stochastic_rounding=False,
+                stochastic_rounding=stochastic_rounding,
                 update_parameters=update_parameters,
+                step_int=step_int,
                 n_elements=n_elements,
                 BLOCK_SIZE=block_size,
                 mantissa_bits=mantissa_bits,

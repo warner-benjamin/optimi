@@ -13,10 +13,12 @@ __all__ = [
     "compute_flash_state",
     "effective_flash_precision",
     "init_flash_state",
+    "init_stochastic_state",
     "normalize_flash_precision",
     "reconstruct_fp32_param",
     "resolve_effective_flash",
     "uses_flash",
+    "validate_stochastic_rounding",
 ]
 
 
@@ -94,6 +96,7 @@ def resolve_effective_flash(
     flash: bool | str | FlashPrecision | None,
     triton: bool,
     triton_supported: bool,
+    require_contiguous: bool = False,
 ) -> list[FlashPrecision | None]:
     """Resolve group FlashOptim precision and validate explicit FlashOptim requirements."""
     explicit_flash = uses_flash(flash)
@@ -104,11 +107,29 @@ def resolve_effective_flash(
     if explicit_flash:
         if not any(effective_flash is not None for effective_flash in effective_flashes):
             raise ValueError("flash was enabled, but no bf16 or fp16 parameters were found.")
+    if explicit_flash or require_contiguous:
         for param, grad, effective_flash in zip(params, grads, effective_flashes):
             if effective_flash is not None and (not param.is_contiguous() or not grad.is_contiguous()):
                 raise ValueError("FlashOptim training support requires contiguous parameters and gradients.")
 
     return effective_flashes
+
+
+def validate_stochastic_rounding(
+    stochastic_rounding: bool,
+    flash_comps: list[Tensor | None] | Tensor | None,
+    triton: bool,
+    gradient_release: bool,
+):
+    """Validate direct functional stochastic-rounding calls before dispatch."""
+    if not stochastic_rounding:
+        return
+    if not triton:
+        raise ValueError("FlashOptim training support requires triton=True")
+    if flash_comps is None:
+        raise ValueError("stochastic_rounding=True requires FlashOptim parameter compensation.")
+    if not gradient_release and not any(flash_comp is not None for flash_comp in flash_comps):
+        raise ValueError("stochastic_rounding=True requires FlashOptim parameter compensation.")
 
 
 def _check_narrow_param(param: Tensor):
@@ -123,6 +144,11 @@ def init_flash_state(param: Tensor, flash: bool | str | FlashPrecision | None) -
         return None
     _check_narrow_param(param)
     return torch.zeros_like(param, dtype=flash_dtype, memory_format=torch.preserve_format)
+
+
+def init_stochastic_state(param: Tensor) -> Tensor:
+    """Initialize a per-parameter stochastic-rounding stream seed."""
+    return torch.randint(0, 2**31 - 1, (), dtype=torch.int32, device=param.device)
 
 
 def _log_ulp(param: Tensor) -> Tensor:
@@ -161,8 +187,6 @@ def compute_flash_state(
     stochastic_rounding: bool = False,
 ) -> Tensor:
     """Compute FlashOptim state from an fp32 parameter and its narrow storage tensor."""
-    if stochastic_rounding:
-        raise ValueError("stochastic_rounding=True is not supported until the stochastic rounding milestone.")
     if fp32_param.dtype != torch.float32:
         raise ValueError(f"fp32_param must be float32, got {fp32_param.dtype}.")
     _check_narrow_param(narrow_param)
@@ -177,7 +201,11 @@ def compute_flash_state(
     error = fp32_param - narrow_param.to(torch.float32)
     normalized = (error / scale).clamp(-1.0, 1.0)
     scaled = normalized * _SIGNED_MAX[flash_dtype]
-    rounded = torch.copysign(torch.floor(scaled.abs() + 0.5), scaled)
+    if stochastic_rounding:
+        lower = torch.floor(scaled)
+        rounded = lower + (torch.rand_like(scaled) < (scaled - lower)).to(scaled.dtype)
+    else:
+        rounded = torch.copysign(torch.floor(scaled.abs() + 0.5), scaled)
     return rounded.to(flash_dtype)
 
 
@@ -217,11 +245,28 @@ if HAS_TRITON:
         return param.to(tl.float32) + correction
 
     @triton.jit
-    def _compute_flash(fp32_param, narrow_param, flash_t: tl.constexpr, mantissa_bits: tl.constexpr, signed_max: tl.constexpr):
+    def _compute_flash(
+        fp32_param,
+        narrow_param,
+        stochastic_seed,
+        rng_offsets,
+        flash_t: tl.constexpr,
+        mantissa_bits: tl.constexpr,
+        signed_max: tl.constexpr,
+        stochastic_rounding: tl.constexpr,
+    ):
         scale = _flash_log_scale(narrow_param, mantissa_bits)
         error = fp32_param - narrow_param.to(tl.float32)
         normalized = tl.clamp(_scale_by_exp2(error, -scale), -1.0, 1.0)
         scaled = normalized * signed_max
-        rounded_abs = tl.floor(tl.abs(scaled) + 0.5)
-        rounded = tl.where(scaled < 0, -rounded_abs, rounded_abs)
+        if stochastic_rounding:
+            lower = tl.floor(scaled)
+            rng = (rng_offsets.to(tl.uint32) + stochastic_seed.to(tl.uint32)) * 1664525 + 1013904223
+            rng = (rng ^ (rng >> 16)) * 2246822519
+            rng = rng ^ (rng >> 13)
+            uniform = rng.to(tl.float32) * 2.3283064365386963e-10
+            rounded = lower + tl.where(uniform < scaled - lower, 1.0, 0.0)
+        else:
+            rounded_abs = tl.floor(tl.abs(scaled) + 0.5)
+            rounded = tl.where(scaled < 0, -rounded_abs, rounded_abs)
         return rounded.to(flash_t)

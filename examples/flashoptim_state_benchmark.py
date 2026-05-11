@@ -57,6 +57,7 @@ def main():
         ("flash=32", {"flash": "32", "quantize": False}),
         ("quantize=True", {"flash": False, "quantize": True}),
         ("flash=24,quantize=True", {"flash": True, "quantize": True}),
+        ("flash=24,stochastic=True", {"flash": True, "stochastic_rounding": True}),
     ]
     optimizers = [
         ("adamw", AdamW, {}),

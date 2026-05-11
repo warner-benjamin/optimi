@@ -34,11 +34,11 @@ def test_lion_sgd_flash_rejects_kahan_sum_conflict(optimizer_cls):
 
 
 @pytest.mark.parametrize("optimizer_cls", [Lion, SGD])
-def test_lion_sgd_flash_reserved_options_raise(optimizer_cls):
+def test_lion_sgd_stochastic_rounding_requires_triton_true(optimizer_cls):
     param = torch.nn.Parameter(torch.ones(2, dtype=torch.bfloat16))
 
-    with pytest.raises(ValueError, match="not supported until"):
-        optimizer_cls([param], lr=1e-3, triton=True, stochastic_rounding=True)
+    with pytest.raises(ValueError, match="requires triton=True"):
+        optimizer_cls([param], lr=1e-3, triton=False, stochastic_rounding=True)
 
 
 @pytest.mark.parametrize("optimizer_cls", [Lion, SGD])
@@ -143,6 +143,63 @@ def test_sgd_functional_flash_rejects_non_triton():
         )
 
 
+def test_lion_functional_stochastic_rounding_requires_flash_comp():
+    param = torch.ones(2, dtype=torch.bfloat16)
+    grad = torch.ones_like(param)
+    exp_avg = torch.zeros_like(param)
+    step = torch.tensor(0, dtype=torch.int32)
+
+    with pytest.raises(ValueError, match="requires FlashOptim parameter compensation"):
+        lion(
+            params=[param],
+            grads=[grad],
+            exp_avgs=[exp_avg],
+            lr=1e-3,
+            beta1=0.9,
+            beta2=0.99,
+            weight_decay=0.0,
+            step=step,
+            stochastic_rounding=True,
+            triton=True,
+        )
+
+
+def test_sgd_functional_stochastic_rounding_requires_flash_comp():
+    param = torch.ones(2, dtype=torch.bfloat16)
+    grad = torch.ones_like(param)
+    exp_avg = torch.zeros_like(param)
+    step = torch.tensor(0, dtype=torch.int32)
+
+    with pytest.raises(ValueError, match="requires FlashOptim parameter compensation"):
+        sgd(
+            params=[param],
+            grads=[grad],
+            exp_avgs=[exp_avg],
+            lr=1e-3,
+            momentum=0.9,
+            weight_decay=0.0,
+            dampening=False,
+            decouple_wd=True,
+            step=step,
+            stochastic_rounding=True,
+            triton=True,
+        )
+
+
+@pytest.mark.parametrize("optimizer_cls", [Lion, SGD])
+def test_lion_sgd_stochastic_rounding_rejects_non_contiguous_auto_flash(optimizer_cls):
+    device = _triton_device()
+    if device is None:
+        pytest.skip("requires a Triton-supported device")
+
+    param = torch.nn.Parameter(torch.ones((4, 4), device=device, dtype=torch.bfloat16).t())
+    param.grad = torch.ones_like(param)
+    optimizer = optimizer_cls([param], lr=1e-3, stochastic_rounding=True, triton=True)
+
+    with pytest.raises(ValueError, match="requires contiguous"):
+        optimizer.step()
+
+
 @pytest.mark.parametrize(
     "optimizer_cls,kwargs",
     [
@@ -192,3 +249,45 @@ def test_lion_sgd_flash_gradient_release_accumulation_skips_param_and_flash_upda
     assert torch.equal(param, before_param)
     assert torch.equal(optimizer.state[param]["flash_comp"], before_flash)
     assert not torch.equal(optimizer.state[param][state_name], before_state)
+
+
+@pytest.mark.parametrize(
+    "optimizer_cls,kwargs",
+    [
+        (Lion, {}),
+        (SGD, {}),
+        (SGD, {"momentum": 0.9}),
+    ],
+)
+def test_lion_sgd_stochastic_rounding_reproducible_with_manual_seed(optimizer_cls, kwargs):
+    device = _triton_device()
+    if device is None:
+        pytest.skip("requires a Triton-supported device")
+
+    initial = torch.ones(257, device=device, dtype=torch.bfloat16)
+    grad = torch.full_like(initial, 0.25)
+    flash_states = []
+    for _ in range(2):
+        torch.manual_seed(123)
+        param = torch.nn.Parameter(initial.clone())
+        param.grad = grad.clone()
+        optimizer = optimizer_cls([param], lr=1e-3, flash=True, stochastic_rounding=True, triton=True, **kwargs)
+        optimizer.step()
+        flash_states.append(optimizer.state[param]["flash_comp"].clone())
+
+    assert torch.equal(flash_states[0], flash_states[1])
+
+
+def test_sgd_stochastic_rounding_triton_kernel_is_statistical():
+    device = _triton_device()
+    if device is None:
+        pytest.skip("requires a Triton-supported device")
+
+    param = torch.nn.Parameter(torch.ones(4096, device=device, dtype=torch.bfloat16))
+    param.grad = torch.full_like(param, -1.0)
+    optimizer = SGD([param], lr=2.0**-10, flash=True, stochastic_rounding=True, triton=True)
+
+    optimizer.step()
+
+    flash_comp = optimizer.state[param]["flash_comp"].to(torch.float32)
+    assert abs(flash_comp.mean().item() - 31.75) < 0.75

@@ -44,4 +44,22 @@ TESTS = [
             )
         ),
     ),
+    OptTest(
+        name="adamw_stochastic",
+        optimi_class=optimi.AdamW,
+        optimi_params=AdamWParams(flash=True, stochastic_rounding=True),
+        reference_class=torch.optim.AdamW,
+        reference_params=AdamWParams(),
+        skip_tests=[OptTestType.gradient_release, OptTestType.accumulation],
+        triton_only=True,
+        only_dtypes=[torch.bfloat16],
+        spec=TestSpec(
+            normal=NormalSpec(
+                iterations_gpu=8,
+                tolerance={
+                    torch.bfloat16: Tolerance(atol=2e-2, rtol=2e-2, max_error_rate=0.08),
+                },
+            )
+        ),
+    ),
 ]

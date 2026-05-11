@@ -41,7 +41,7 @@ class AdamW(Adam):
             (default: None)
         quantize: Enables grouped optimizer-state quantization for Triton training
             (default: False)
-        stochastic_rounding: Reserved for FlashOptim stochastic rounding. Not supported yet
+        stochastic_rounding: Enables stochastic rounding for FlashOptim correction bits
             (default: False)
         foreach: Removed; True raises ValueError
         triton: Enables Triton implementation. If unspecified, tries to use Triton as it is
@@ -94,6 +94,7 @@ def adamw(
     exp_avg_sqs: list[Tensor],
     kahan_comps: list[Tensor | None] | None = None,
     flash_comps: list[Tensor | None] | Tensor | None = None,
+    stochastic_seeds: list[Tensor | None] | Tensor | None = None,
     exp_avg_scales: list[Tensor | None] | Tensor | None = None,
     exp_avg_sq_scales: list[Tensor | None] | Tensor | None = None,
     *,
@@ -126,6 +127,7 @@ def adamw(
         exp_avg_sq_scales: Quantized squared gradient moving average scales
         kahan_comps: Kahan summation compensations
         flash_comps: FlashOptim parameter compensations
+        stochastic_seeds: Per-parameter stochastic rounding seeds
         lr: Learning rate
         beta1: Gradient moving average factor
         beta2: Squared gradient moving average factor
@@ -136,7 +138,7 @@ def adamw(
         max_lr: Maximum scheduled learning rate for `decouple_lr`
         kahan_sum: Enables Kahan summation for low precision `params`
         quantize: Enables grouped optimizer-state quantization
-        stochastic_rounding: Reserved for FlashOptim stochastic rounding
+        stochastic_rounding: Enables stochastic rounding for FlashOptim correction bits
         foreach: Removed; True raises ValueError
         triton: Enables the faster Triton implementation
         gradient_release: Fuses optimizer step as part of the parameter's backward pass
@@ -151,6 +153,7 @@ def adamw(
         exp_avg_sq_scales=exp_avg_sq_scales,
         kahan_comps=kahan_comps,
         flash_comps=flash_comps,
+        stochastic_seeds=stochastic_seeds,
         lr=lr,
         beta1=beta1,
         beta2=beta2,

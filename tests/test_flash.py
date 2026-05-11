@@ -62,14 +62,14 @@ def test_init_flash_state_rejects_unsupported_dtype():
 def test_flash_roundtrip_error_bounds(dtype, flash):
     if dtype == torch.bfloat16:
         values = torch.tensor(
-            [0.0, -0.0, 2.0**-133, -2.0**-133, 2.0**-126, -2.0**-126, 1.0, -1.0, 17.25, -31.5],
+            [0.0, -0.0, 2.0**-133, -(2.0**-133), 2.0**-126, -(2.0**-126), 1.0, -1.0, 17.25, -31.5],
             dtype=torch.float32,
         )
         mantissa_bits = 7
         exponent_bias = 127
     else:
         values = torch.tensor(
-            [0.0, -0.0, 2.0**-24, -2.0**-24, 2.0**-14, -2.0**-14, 1.0, -1.0, 17.25, -31.5],
+            [0.0, -0.0, 2.0**-24, -(2.0**-24), 2.0**-14, -(2.0**-14), 1.0, -1.0, 17.25, -31.5],
             dtype=torch.float32,
         )
         mantissa_bits = 10
@@ -133,11 +133,16 @@ def test_compute_flash_state_rejects_unsupported_inputs():
         compute_flash_state(fp32_param, narrow_param, True)
 
 
-def test_compute_flash_state_rejects_stochastic_rounding_until_milestone():
-    fp32_param = torch.ones(2, dtype=torch.float32)
-    narrow_param = torch.ones(2, dtype=torch.bfloat16)
-    with pytest.raises(ValueError, match="stochastic_rounding=True is not supported"):
-        compute_flash_state(fp32_param, narrow_param, True, stochastic_rounding=True)
+def test_compute_flash_state_stochastic_rounding_is_statistical():
+    torch.manual_seed(1)
+    narrow_param = torch.ones(4096, dtype=torch.bfloat16)
+    scale = torch.full_like(narrow_param, 2.0**-8, dtype=torch.float32)
+    fp32_param = narrow_param.to(torch.float32) + 0.25 * scale
+
+    flash_state = compute_flash_state(fp32_param, narrow_param, True, stochastic_rounding=True)
+
+    assert flash_state.dtype == torch.int8
+    assert abs(flash_state.to(torch.float32).mean().item() - 31.75) < 0.75
 
 
 def _log_ulp(param: torch.Tensor, mantissa_bits: int, exponent_bias: int) -> torch.Tensor:
