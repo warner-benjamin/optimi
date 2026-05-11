@@ -767,13 +767,13 @@ if HAS_TRITON:
         block_start = pid * BLOCK_SIZE
         offsets = block_start + tl.arange(0, BLOCK_SIZE)
         mask = offsets < n_elements
-        NUM_GROUPS: tl.constexpr = BLOCK_SIZE // GROUP_SIZE
-        scale_offsets = block_start // GROUP_SIZE + tl.arange(0, NUM_GROUPS)
-        scale_mask = scale_offsets < tl.cdiv(n_elements, GROUP_SIZE)
 
         param = tl.load(param_ptr + offsets, mask=mask)
         grad = tl.load(grad_ptr + offsets, mask=mask).to(tl.float32)
         if quantize_state:
+            NUM_GROUPS: tl.constexpr = BLOCK_SIZE // GROUP_SIZE
+            scale_offsets = block_start // GROUP_SIZE + tl.arange(0, NUM_GROUPS)
+            scale_mask = scale_offsets < tl.cdiv(n_elements, GROUP_SIZE)
             exp_avg = _dequantize_momentum(
                 tl.load(exp_avg_ptr + offsets, mask=mask, other=0),
                 tl.load(exp_avg_scale_ptr + scale_offsets, mask=scale_mask, other=1.0),
@@ -829,16 +829,73 @@ if HAS_TRITON:
                 tl.store(flash_ptr + offsets, flash_comp, mask=mask)
 
         if quantize_state:
-            exp_avg_q, exp_avg_scale = _quantize_momentum(exp_avg, mask, NUM_GROUPS, GROUP_SIZE)
+            STORE_NUM_GROUPS: tl.constexpr = BLOCK_SIZE // GROUP_SIZE
+            store_scale_offsets = block_start // GROUP_SIZE + tl.arange(0, STORE_NUM_GROUPS)
+            store_scale_mask = store_scale_offsets < tl.cdiv(n_elements, GROUP_SIZE)
+            exp_avg_q, exp_avg_scale = _quantize_momentum(exp_avg, mask, STORE_NUM_GROUPS, GROUP_SIZE)
             tl.store(exp_avg_ptr + offsets, exp_avg_q.to(tl.int8), mask=mask)
-            tl.store(exp_avg_scale_ptr + scale_offsets, exp_avg_scale, mask=scale_mask)
+            tl.store(exp_avg_scale_ptr + store_scale_offsets, exp_avg_scale, mask=store_scale_mask)
 
-            exp_avg_sq_q, exp_avg_sq_scale = _quantize_variance(exp_avg_sq, mask, NUM_GROUPS, GROUP_SIZE)
+            exp_avg_sq_q, exp_avg_sq_scale = _quantize_variance(exp_avg_sq, mask, STORE_NUM_GROUPS, GROUP_SIZE)
             tl.store(exp_avg_sq_ptr + offsets, exp_avg_sq_q.to(tl.uint8), mask=mask)
-            tl.store(exp_avg_sq_scale_ptr + scale_offsets, exp_avg_sq_scale, mask=scale_mask)
+            tl.store(exp_avg_sq_scale_ptr + store_scale_offsets, exp_avg_sq_scale, mask=store_scale_mask)
         else:
             tl.store(exp_avg_ptr + offsets, tl.cast(exp_avg, param.dtype), mask=mask)
             tl.store(exp_avg_sq_ptr + offsets, tl.cast(exp_avg_sq, param.dtype), mask=mask)
+
+    @triton.jit
+    def _adam_flash_only_kernel(
+        param_ptr,
+        grad_ptr,
+        exp_avg_ptr,
+        exp_avg_sq_ptr,
+        flash_ptr,
+        lr,
+        beta1_hat,
+        beta1_comp,
+        beta2_hat,
+        beta2_comp,
+        weight_decay,
+        eps,
+        do_weight_decay: tl.constexpr,
+        decouple_wd: tl.constexpr,
+        update_parameters: tl.constexpr,
+        n_elements,
+        BLOCK_SIZE: tl.constexpr,
+        mantissa_bits: tl.constexpr,
+        flash_t: tl.constexpr,
+        signed_max: tl.constexpr,
+    ):
+        pid = tl.program_id(0)
+        block_start = pid * BLOCK_SIZE
+        offsets = block_start + tl.arange(0, BLOCK_SIZE)
+        mask = offsets < n_elements
+
+        param = tl.load(param_ptr + offsets, mask=mask)
+        grad = tl.load(grad_ptr + offsets, mask=mask).to(tl.float32)
+        exp_avg = tl.load(exp_avg_ptr + offsets, mask=mask).to(tl.float32)
+        exp_avg_sq = tl.load(exp_avg_sq_ptr + offsets, mask=mask).to(tl.float32)
+        flash_comp = tl.load(flash_ptr + offsets, mask=mask, other=0)
+        param_fp32 = _apply_flash(param, flash_comp, mantissa_bits, signed_max)
+
+        if do_weight_decay and update_parameters:
+            if decouple_wd:
+                param_fp32 = param_fp32 * weight_decay
+            else:
+                grad = grad + param_fp32 * weight_decay
+
+        exp_avg = tl.fma(exp_avg, beta1_hat, beta1_comp * grad)
+        exp_avg_sq = tl.fma(exp_avg_sq, beta2_hat, beta2_comp * grad * grad)
+
+        if update_parameters:
+            param_fp32 = param_fp32 - (lr * exp_avg / (tl.sqrt(exp_avg_sq) + eps))
+            param = param_fp32.to(param.dtype)
+            tl.store(param_ptr + offsets, param, mask=mask)
+            flash_comp = _compute_flash(param_fp32, param, 0, offsets, flash_t, mantissa_bits, signed_max, False)
+            tl.store(flash_ptr + offsets, flash_comp, mask=mask)
+
+        tl.store(exp_avg_ptr + offsets, tl.cast(exp_avg, param.dtype), mask=mask)
+        tl.store(exp_avg_sq_ptr + offsets, tl.cast(exp_avg_sq, param.dtype), mask=mask)
 
     def _triton_adam_flash(
         params: list[Tensor],
@@ -883,36 +940,60 @@ if HAS_TRITON:
             mantissa_bits = 10 if param.dtype == torch.float16 else 7
 
             with _device_guard(param):
-                _adam_flash_kernel[grid](
-                    param_ptr=param,
-                    grad_ptr=grad,
-                    exp_avg_ptr=exp_avg,
-                    exp_avg_sq_ptr=exp_avg_sq,
-                    exp_avg_scale_ptr=exp_avg_scale,
-                    exp_avg_sq_scale_ptr=exp_avg_sq_scale,
-                    flash_ptr=flash_ptr,
-                    stochastic_seed_ptr=stochastic_seed,
-                    lr=lr,
-                    beta1_hat=beta1_hat,
-                    beta1_comp=beta1_comp,
-                    beta2_hat=beta2_hat,
-                    beta2_comp=beta2_comp,
-                    weight_decay=weight_decay,
-                    eps=eps,
-                    do_weight_decay=weight_decay != 0.0,
-                    use_flash=use_flash,
-                    quantize_state=quantize_state,
-                    stochastic_rounding=stochastic_rounding,
-                    decouple_wd=decouple_wd,
-                    update_parameters=update_parameters,
-                    step_int=step_int,
-                    n_elements=n_elements,
-                    BLOCK_SIZE=block_size,
-                    GROUP_SIZE=GROUP_SIZE,
-                    mantissa_bits=mantissa_bits,
-                    flash_t=flash_t,
-                    signed_max=signed_max,
-                )
+                if use_flash and not quantize_state and not stochastic_rounding:
+                    _adam_flash_only_kernel[grid](
+                        param_ptr=param,
+                        grad_ptr=grad,
+                        exp_avg_ptr=exp_avg,
+                        exp_avg_sq_ptr=exp_avg_sq,
+                        flash_ptr=flash_ptr,
+                        lr=lr,
+                        beta1_hat=beta1_hat,
+                        beta1_comp=beta1_comp,
+                        beta2_hat=beta2_hat,
+                        beta2_comp=beta2_comp,
+                        weight_decay=weight_decay,
+                        eps=eps,
+                        do_weight_decay=weight_decay != 0.0,
+                        decouple_wd=decouple_wd,
+                        update_parameters=update_parameters,
+                        n_elements=n_elements,
+                        BLOCK_SIZE=block_size,
+                        mantissa_bits=mantissa_bits,
+                        flash_t=flash_t,
+                        signed_max=signed_max,
+                    )
+                else:
+                    _adam_flash_kernel[grid](
+                        param_ptr=param,
+                        grad_ptr=grad,
+                        exp_avg_ptr=exp_avg,
+                        exp_avg_sq_ptr=exp_avg_sq,
+                        exp_avg_scale_ptr=exp_avg_scale,
+                        exp_avg_sq_scale_ptr=exp_avg_sq_scale,
+                        flash_ptr=flash_ptr,
+                        stochastic_seed_ptr=stochastic_seed,
+                        lr=lr,
+                        beta1_hat=beta1_hat,
+                        beta1_comp=beta1_comp,
+                        beta2_hat=beta2_hat,
+                        beta2_comp=beta2_comp,
+                        weight_decay=weight_decay,
+                        eps=eps,
+                        do_weight_decay=weight_decay != 0.0,
+                        use_flash=use_flash,
+                        quantize_state=quantize_state,
+                        stochastic_rounding=stochastic_rounding,
+                        decouple_wd=decouple_wd,
+                        update_parameters=update_parameters,
+                        step_int=step_int,
+                        n_elements=n_elements,
+                        BLOCK_SIZE=block_size,
+                        GROUP_SIZE=GROUP_SIZE,
+                        mantissa_bits=mantissa_bits,
+                        flash_t=flash_t,
+                        signed_max=signed_max,
+                    )
 
     def _single_param_triton_adam(
         param: Tensor,

@@ -711,9 +711,6 @@ if HAS_TRITON:
         block_start = pid * BLOCK_SIZE
         offsets = block_start + tl.arange(0, BLOCK_SIZE)
         mask = offsets < n_elements
-        NUM_GROUPS: tl.constexpr = BLOCK_SIZE // GROUP_SIZE
-        scale_offsets = block_start // GROUP_SIZE + tl.arange(0, NUM_GROUPS)
-        scale_mask = scale_offsets < tl.cdiv(n_elements, GROUP_SIZE)
 
         param = tl.load(param_ptr + offsets, mask=mask)
         grad = tl.load(grad_ptr + offsets, mask=mask).to(tl.float32)
@@ -733,6 +730,9 @@ if HAS_TRITON:
 
         if do_momentum:
             if quantize_state:
+                NUM_GROUPS: tl.constexpr = BLOCK_SIZE // GROUP_SIZE
+                scale_offsets = block_start // GROUP_SIZE + tl.arange(0, NUM_GROUPS)
+                scale_mask = scale_offsets < tl.cdiv(n_elements, GROUP_SIZE)
                 exp_avg = _dequantize_momentum(
                     tl.load(exp_avg_ptr + offsets, mask=mask, other=0),
                     tl.load(exp_avg_scale_ptr + scale_offsets, mask=scale_mask, other=1.0),
@@ -771,9 +771,12 @@ if HAS_TRITON:
 
         if do_momentum:
             if quantize_state:
-                exp_avg_q, exp_avg_scale = _quantize_momentum(exp_avg, mask, NUM_GROUPS, GROUP_SIZE)
+                STORE_NUM_GROUPS: tl.constexpr = BLOCK_SIZE // GROUP_SIZE
+                store_scale_offsets = block_start // GROUP_SIZE + tl.arange(0, STORE_NUM_GROUPS)
+                store_scale_mask = store_scale_offsets < tl.cdiv(n_elements, GROUP_SIZE)
+                exp_avg_q, exp_avg_scale = _quantize_momentum(exp_avg, mask, STORE_NUM_GROUPS, GROUP_SIZE)
                 tl.store(exp_avg_ptr + offsets, exp_avg_q.to(tl.int8), mask=mask)
-                tl.store(exp_avg_scale_ptr + scale_offsets, exp_avg_scale, mask=scale_mask)
+                tl.store(exp_avg_scale_ptr + store_scale_offsets, exp_avg_scale, mask=store_scale_mask)
             else:
                 tl.store(exp_avg_ptr + offsets, tl.cast(exp_avg, param.dtype), mask=mask)
 
