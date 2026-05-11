@@ -24,10 +24,6 @@ def _validate_flash_options(options: dict[str, Any]):
         raise ValueError("stochastic_rounding=True is not supported until the stochastic rounding milestone.")
     if explicit_flash and options.get("triton") is not True:
         raise ValueError("FlashOptim training support requires triton=True")
-    if options["gradient_release"] and explicit_flash:
-        raise ValueError("FlashOptim training support does not support gradient_release=True yet.")
-    if options["gradient_release"] and options["flash"] is None:
-        options["flash"] = FlashPrecision.OFF.value
     if options["kahan_sum"] is True and explicit_flash:
         raise ValueError("kahan_sum=True and flash cannot be used together")
     if options["kahan_sum"] is True and options["flash"] is None:

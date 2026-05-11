@@ -229,15 +229,23 @@ class SGD(OptimiOptimizer):
         else:
             state = self.state[param]
             group = state["group"]
-            effective_kahan = (group["kahan_sum"] or group["kahan_sum"] is None) and param.dtype in [torch.float16, torch.bfloat16]
-            self._init_state(group, state, param, effective_flash=None, effective_kahan=effective_kahan)
+            if group["triton"] is None:
+                group["triton"] = _default_to_triton([param])
+            triton_supported = _default_to_triton([param])
+            effective_flash = resolve_effective_flash([param], [param.grad], group["flash"], group["triton"], triton_supported)[0]
+            effective_kahan = (
+                effective_flash is None
+                and (group["kahan_sum"] or group["kahan_sum"] is None)
+                and param.dtype in [torch.float16, torch.bfloat16]
+            )
+            self._init_state(group, state, param, effective_flash=effective_flash, effective_kahan=effective_kahan)
 
             sgd(
                 params=param,
                 grads=param.grad,
                 exp_avgs=state["exp_avg"],
                 kahan_comps=state["kahan_comp"],
-                flash_comps=None,
+                flash_comps=state["flash_comp"] if effective_flash is not None else None,
                 lr=group["lr"],
                 momentum=group["momentum"],
                 weight_decay=group["weight_decay"],
@@ -323,10 +331,11 @@ def sgd(
 
     use_flash_impl = False
     if gradient_release:
-        if flash_comps is not None:
-            raise ValueError("FlashOptim training support does not support gradient_release=True yet.")
+        use_flash_impl = flash_comps is not None
+        if use_flash_impl and not triton:
+            raise ValueError("FlashOptim training support requires triton=True")
         if triton:
-            func = _single_param_triton_sgd
+            func = _single_param_triton_sgd_flash if use_flash_impl else _single_param_triton_sgd
         else:
             func = _single_param_sgd
     else:
@@ -719,4 +728,51 @@ if HAS_TRITON:
                 update_parameters=update_parameters,
                 n_elements=n_elements,
                 BLOCK_SIZE=block_size,
+            )
+
+    def _single_param_triton_sgd_flash(
+        param: Tensor,
+        grad: Tensor,
+        exp_avg: Tensor,
+        kahan_comp: Tensor,
+        *,
+        flash_comps: Tensor,
+        lr: float,
+        momentum: float,
+        weight_decay: float,
+        dampening: bool,
+        decouple_wd: bool,
+        kahan_sum: bool,
+        update_parameters: bool,
+        **kwargs,
+    ):
+        n_elements = param.numel()
+        block_size = _get_triton_block_size(n_elements)
+        grid = (triton.cdiv(n_elements, block_size),)
+        flash_t = tl.int16 if flash_comps.dtype == torch.int16 else tl.int8
+        signed_max = 32767 if flash_comps.dtype == torch.int16 else 127
+        mantissa_bits = 10 if param.dtype == torch.float16 else 7
+
+        with _device_guard(param):
+            _sgd_flash_kernel[grid](
+                param_ptr=param,
+                grad_ptr=grad,
+                exp_avg_ptr=exp_avg,
+                flash_ptr=flash_comps,
+                lr=lr,
+                momentum=momentum,
+                weight_decay=weight_decay,
+                dampening=dampening,
+                decouple_wd=decouple_wd,
+                do_weight_decay=weight_decay != 0.0,
+                do_momentum=momentum != 0.0,
+                use_flash=True,
+                quantize_state=False,
+                stochastic_rounding=False,
+                update_parameters=update_parameters,
+                n_elements=n_elements,
+                BLOCK_SIZE=block_size,
+                mantissa_bits=mantissa_bits,
+                flash_t=flash_t,
+                signed_max=signed_max,
             )

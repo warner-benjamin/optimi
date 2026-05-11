@@ -120,3 +120,40 @@ def test_adam_functional_flash_rejects_non_triton():
             decouple_wd=True,
             triton=False,
         )
+
+
+@pytest.mark.parametrize("optimizer_cls", [Adam, AdamW])
+def test_adam_flash_gradient_release_step_initializes_flash_comp(optimizer_cls):
+    device = _triton_device()
+    if device is None:
+        pytest.skip("requires a Triton-supported device")
+    param = torch.nn.Parameter(torch.ones(32, device=device, dtype=torch.float16))
+    param.grad = torch.full_like(param, 0.25)
+    optimizer = optimizer_cls([param], lr=1e-3, flash=True, triton=True, gradient_release=True)
+
+    optimizer.step(param=param)
+
+    assert optimizer.state[param]["flash_comp"].dtype == torch.int8
+    assert optimizer.state[param]["flash_comp"].abs().sum() > 0
+    assert torch.isfinite(param).all()
+
+
+def test_adam_flash_gradient_release_accumulation_skips_param_and_flash_update():
+    device = _triton_device()
+    if device is None:
+        pytest.skip("requires a Triton-supported device")
+    param = torch.nn.Parameter(torch.ones(32, device=device, dtype=torch.float16))
+    param.grad = torch.full_like(param, 0.25)
+    optimizer = Adam([param], lr=1e-3, flash=True, triton=True, gradient_release=True)
+    optimizer.step(param=param)
+    before_param = param.detach().clone()
+    before_flash = optimizer.state[param]["flash_comp"].clone()
+    before_exp_avg = optimizer.state[param]["exp_avg"].clone()
+
+    param.grad = torch.full_like(param, 0.5)
+    optimizer.optimizer_accumulation = True
+    optimizer.step(param=param)
+
+    assert torch.equal(param, before_param)
+    assert torch.equal(optimizer.state[param]["flash_comp"], before_flash)
+    assert not torch.equal(optimizer.state[param]["exp_avg"], before_exp_avg)
