@@ -17,6 +17,10 @@ optimi optimizers can match the performance of mixed precision when [training in
 
 Training in BFloat16 with Kahan summation can reduce non-activation training memory usage by [37 to 45 percent](https://optimi.benjaminwarner.dev/kahan_summation/#memory-savings) when using an Adam optimizer. BFloat16 training can increase single GPU [training speed up to 10 percent](https://optimi.benjaminwarner.dev/kahan_summation/#training-speedup) at the same batch size.
 
+## FlashOptim Training
+
+Adam, AdamW, Lion, and SGD support [FlashOptim training](https://optimi.benjaminwarner.dev/flashoptim) on Triton. FlashOptim stores low precision parameters with integer correction bits and can optionally quantize optimizer state.
+
 ## Fast Triton Implementations
 
 optimi's fused [Triton optimizers](https://optimi.benjaminwarner.dev/triton) are faster than PyTorch's fused Cuda optimizers, and nearly as fast as compiled optimizers without any hassle.

@@ -14,7 +14,7 @@ If unspecified `triton=None`, optimi will use the Triton implementation by defau
 
     optimi’s Triton implementations require PyTorch 2.6 or newer. It's recommended to use the latest version of PyTorch and Triton.
 
-The Triton backend is compatible with [gradient release](gradient_release.md) and [optimizer accumulation](optimizer_accumulation.md).
+The Triton backend is compatible with [FlashOptim training](flashoptim.md), [gradient release](gradient_release.md), and [optimizer accumulation](optimizer_accumulation.md).
 
 ## Example
 

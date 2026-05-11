@@ -18,7 +18,11 @@ Using Kahan summation for accurate BFloat16 training is as simple as replacing a
 
     optimi's [`to_low_precision`][optimi.utils.to_low_precision] simplifies keeping these layers in Float32.
 
-By default, optimi optimizers will automatically use Kahan summation for any layers training in low precision. Set `kahan_sum=False` to disable.
+By default, optimi optimizers will automatically use Kahan summation for low precision layers when FlashOptim is not active. Set `kahan_sum=False` to disable.
+
+!!! note "FlashOptim"
+
+    [`FlashOptim training`](flashoptim.md) is the replacement path for Kahan summation on supported Triton optimizers. It currently supports Adam, AdamW, Lion, and SGD. optimi does not emit a Kahan deprecation warning while Kahan remains the only low precision compensation path for some optimizers.
 
 ## Mixed Precision
 
@@ -88,7 +92,7 @@ opt.step()
 opt.zero_grad()
 ```
 
-To disable Kahan Summation pass `kahan_summation=False` on optimizer initialization.
+To disable Kahan Summation pass `kahan_sum=False` on optimizer initialization.
 
 ## Algorithm
 

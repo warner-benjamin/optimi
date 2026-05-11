@@ -11,7 +11,7 @@ Gradient release reduces training memory by limiting gradients to one layer at a
 
 During the backward pass, each model layer calculates its gradients, performs the optimizer step, and clears the gradients before proceeding to the backward pass for the next layer. This fused backward and optimizer step can reduce non-activation memory usage by ~25 percent for an Adam optimizer.
 
-Gradient release can also be combined with other techniques such as [Kahan summation](kahan_summation.md) or [activation checkpointing](https://pytorch.org/docs/stable/checkpoint.html) for further memory savings.
+Gradient release can also be combined with other techniques such as [FlashOptim training](flashoptim.md), [Kahan summation](kahan_summation.md), or [activation checkpointing](https://pytorch.org/docs/stable/checkpoint.html) for further memory savings.
 
 ??? note "Note: Gradient Release Requires PyTorch 2.1+"
 

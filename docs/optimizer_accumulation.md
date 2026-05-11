@@ -11,7 +11,7 @@ description: "Gradient Release with Approximate Gradient Accumulation"
 
 During the backward pass, each model layer calculates its gradients, performs a partial optimizer step, and clears the gradients before proceeding to the backward pass for the next layer. The partial optimizer step accumulates gradients by updating the optimizer state but not modifying the model weights. After multiple gradients have been accumulated into optimizer states, a normal optimizer step is ran updating the model parameters with the accumulated states.
 
-Optimizer accumulation can reduce non-activation memory usage by ~40 percent compared to an Adam optimizer with gradient accumulation. Optimizer accumulation can also be combined with other techniques such as [Kahan summation](kahan_summation.md) or [activation checkpointing](https://pytorch.org/docs/stable/checkpoint.html) for further memory savings.
+Optimizer accumulation can reduce non-activation memory usage by ~40 percent compared to an Adam optimizer with gradient accumulation. Optimizer accumulation can also be combined with other techniques such as [FlashOptim training](flashoptim.md), [Kahan summation](kahan_summation.md), or [activation checkpointing](https://pytorch.org/docs/stable/checkpoint.html) for further memory savings.
 
 ??? note "Note: Optimizer Accumulation Requires PyTorch 2.1+"
 

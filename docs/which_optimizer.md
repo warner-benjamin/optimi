@@ -6,7 +6,7 @@ title: Which Optimizer Should I Use?
 
 This guide is meant to provide a quick overview for choosing an optimi optimizer.
 
-All optimi optimizers support training in pure BFloat16 precision[^1] using [Kahan summation](kahan_summation.md), which can help match Float32 optimizer performance with  [mixed precision](https://pytorch.org/blog/what-every-user-should-know-about-mixed-precision-training-in-pytorch) while [reducing memory usage](kahan_summation.md#memory-savings) and [increasing training speed](kahan_summation.md#training-speedup).
+All optimi optimizers support training in pure BFloat16 precision[^1] using [Kahan summation](kahan_summation.md), which can help match Float32 optimizer performance with  [mixed precision](https://pytorch.org/blog/what-every-user-should-know-about-mixed-precision-training-in-pytorch) while [reducing memory usage](kahan_summation.md#memory-savings) and [increasing training speed](kahan_summation.md#training-speedup). Adam, AdamW, Lion, and SGD also support [FlashOptim training](flashoptim.md) on Triton.
 
 ## Tried and True
 

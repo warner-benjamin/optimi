@@ -88,6 +88,7 @@ extra_css:
 
 nav:
   - Low Precision Training: kahan_summation.md
+  - FlashOptim Training: flashoptim.md
   - Triton Optimizers: triton.md
   - Fully Decoupled Weight Decay: fully_decoupled_weight_decay.md
   - Gradient Release: gradient_release.md
