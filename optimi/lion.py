@@ -19,7 +19,6 @@ from typing import Any
 
 import torch
 from torch import Tensor
-from torch.utils._foreach_utils import _group_tensors_by_device_and_dtype
 
 from optimi.optimizer import OptimiOptimizer
 from optimi.utils import HAS_TRITON, _default_to_triton, _device_guard, _get_triton_block_size
@@ -44,10 +43,9 @@ class Lion(OptimiOptimizer):
         kahan_sum: Enables Kahan summation for more accurate parameter updates when training in low
             precision (float16 or bfloat16). If unspecified, automatically applies for low precision
             parameters (default: None)
-        foreach: Enables the foreach implementation. If unspecified, tries to use foreach over
-            for-loop implementation since it can be significantly faster (default: None)
+        foreach: Removed; True raises ValueError
         triton: Enables Triton implementation. If unspecified, tries to use Triton as it is
-            significantly faster than both for-loop and foreach implementations (default: None)
+            significantly faster than the for-loop implementation (default: None)
         gradient_release: Fuses optimizer step and zero_grad as part of the parameter's backward
             pass. Requires model hooks created with `register_gradient_release`. Incompatible with
             closure (default: False)
@@ -114,10 +112,13 @@ class Lion(OptimiOptimizer):
             exp_avgs.append(state["exp_avg"])
             kahan_comps.append(state["kahan_comp"])
 
+        if not params:
+            return
+
         if not group["setup"]:
             group["setup"] = True
 
-            if group["triton"] is None and group["foreach"] is None:
+            if group["triton"] is None:
                 group["triton"] = _default_to_triton(params)
 
     @torch.no_grad()
@@ -140,6 +141,8 @@ class Lion(OptimiOptimizer):
             for group in self.param_groups:
                 params, grads, exp_avgs, kahan_comps = [], [], [], []
                 self._init_group(group, params, grads, exp_avgs, kahan_comps)
+                if not params:
+                    continue
 
                 lion(
                     params=params,
@@ -218,7 +221,7 @@ def lion(
         decouple_lr: Apply fully decoupled weight decay
         max_lr: Maximum scheduled learning rate for `decouple_lr`
         kahan_sum: Enables Kahan summation for low precision `params`
-        foreach: Enables the faster foreach implementation
+        foreach: Removed; True raises ValueError
         triton: Enables the faster Triton implementation
         gradient_release: Fuses optimizer step as part of the parameter's backward pass
         optimizer_accumulation: Accumulate gradients into state during gradient release step
@@ -237,18 +240,17 @@ def lion(
     if kahan_comps is None:
         kahan_comps = [None] * len(params)
 
+    if foreach:
+        raise ValueError("foreach=True is no longer supported. Set foreach=False or use triton=True.")
+
     if gradient_release:
         if triton:
             func = _single_param_triton_lion
-        elif foreach:
-            raise ValueError(f"Gradient release {gradient_release=} and foreach {foreach=} cannot be used together")
         else:
             func = _single_param_lion
     else:
         if triton:
             func = _triton_lion
-        elif foreach:
-            func = _foreach_lion
         else:
             func = _single_lion
 
@@ -336,48 +338,6 @@ def _single_param_lion(
         else:
             # Lion step
             param.add_(update, alpha=-lr)
-
-
-def _foreach_lion(
-    params: list[Tensor],
-    grads: list[Tensor],
-    exp_avgs: list[Tensor | None],
-    kahan_comps: list[Tensor | None],
-    *,
-    lr: float,
-    beta1_comp: float,
-    beta2_comp: float,
-    weight_decay: float,
-    kahan_sum: bool = False,
-    **kwargs,
-):
-    grouped_tensors = _group_tensors_by_device_and_dtype([params, grads, exp_avgs, kahan_comps])
-    for (_, dtype), ((dev_params, dev_grads, dev_exp_avgs, dev_kahan_comps), _) in grouped_tensors.items():
-        # decoupled weight decay or fully decoupled weight decay
-        if weight_decay != 0:
-            torch._foreach_mul_(dev_params, scalar=weight_decay)
-
-        # parameter update value
-        dev_updates = torch._foreach_lerp(dev_exp_avgs, dev_grads, weight=beta1_comp)
-        torch._foreach_sign_(dev_updates)
-
-        # update gradient moving average
-        torch._foreach_lerp_(dev_exp_avgs, dev_grads, weight=beta2_comp)
-
-        if kahan_sum and dtype in [torch.float16, torch.bfloat16]:
-            # Lion step
-            torch._foreach_add_(dev_kahan_comps, dev_updates, alpha=-lr)
-
-            # update weights with kahan compensation using dev_grads as temp buffer
-            torch._foreach_copy_(dev_grads, dev_params)
-            torch._foreach_add_(dev_params, dev_kahan_comps, alpha=1)
-
-            # save error back to kahan compensation for next iteration
-            torch._foreach_sub_(dev_grads, dev_params, alpha=1)
-            torch._foreach_add_(dev_kahan_comps, dev_grads, alpha=1)
-        else:
-            # Lion step
-            torch._foreach_add_(dev_params, dev_updates, alpha=-lr)
 
 
 if HAS_TRITON:

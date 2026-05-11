@@ -16,12 +16,18 @@ DTYPE_PARAMS = [
 ]
 BACKEND_PARAMS = [
     pytest.param(Backend.torch, marks=pytest.mark.torch, id=Backend.torch.value),
-    pytest.param(Backend.foreach, marks=pytest.mark.foreach, id=Backend.foreach.value),
     pytest.param(Backend.triton, marks=pytest.mark.triton, id=Backend.triton.value),
 ]
 
 # Attach per-optimizer marks so users can -m adam, -m sgd, etc.
 OPTIMIZERS = [pytest.param(c, id=c.name, marks=getattr(pytest.mark, c.optimizer_name)) for c in discover_tests()]
+FOREACH_REMOVAL_OPTIMIZERS = []
+_seen_optimizer_classes = set()
+for c in discover_tests():
+    if c.optimi_class in _seen_optimizer_classes:
+        continue
+    _seen_optimizer_classes.add(c.optimi_class)
+    FOREACH_REMOVAL_OPTIMIZERS.append(pytest.param(c, id=c.optimizer_name, marks=getattr(pytest.mark, c.optimizer_name)))
 
 # Full dimensions: CPU -> (64,64), (64,128); GPU -> (256,256), (256,512), (256,1024), (256,2048)
 CPU_DIMS = [
@@ -74,10 +80,6 @@ def _should_skip(test_type: OptTestType, opttest: OptTest, device_type: DeviceTy
 
     # 7. Skip bfloat16 on CPU for most optimizers; allow anyadam exception via opttest.any_precision
     if device_type == DeviceType.cpu and dtype == torch.bfloat16 and not opttest.any_precision:
-        return True
-
-    # 8. Skip foreach for gradient release and accumulation tests
-    if test_type != OptTestType.normal and backend == Backend.foreach:
         return True
 
     return False
@@ -137,6 +139,30 @@ def _build_params(test_type: OptTestType) -> list[ParameterSet]:
                             )
                         )
     return params
+
+
+@pytest.mark.parametrize("opttest", FOREACH_REMOVAL_OPTIMIZERS)
+def test_foreach_removed(opttest: OptTest):
+    param = torch.nn.Parameter(torch.ones(1))
+    kwargs = opttest.to_optimi_kwargs()
+    kwargs["foreach"] = True
+
+    with pytest.raises(ValueError, match="foreach=True is no longer supported"):
+        opttest.optimi_class([param], **kwargs)
+
+    kwargs["foreach"] = False
+    with pytest.raises(ValueError, match="foreach=True is no longer supported"):
+        opttest.optimi_class([{"params": [param], "foreach": True}], **kwargs)
+
+
+@pytest.mark.parametrize("opttest", FOREACH_REMOVAL_OPTIMIZERS)
+def test_no_grad_groups_skip_setup(opttest: OptTest):
+    param = torch.nn.Parameter(torch.ones(1))
+    optimizer = opttest.optimi_class([param], **opttest.to_optimi_kwargs())
+
+    optimizer.step()
+
+    assert not optimizer.param_groups[0]["setup"]
 
 
 def _get_device(device_type: DeviceType, request: pytest.FixtureRequest) -> torch.device:

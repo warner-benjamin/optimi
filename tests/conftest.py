@@ -22,7 +22,6 @@ def pytest_configure(config):
 
     # Register backend marks
     config.addinivalue_line("markers", "torch: mark test to run with torch backend")
-    config.addinivalue_line("markers", "foreach: mark test to run with foreach backend")
     config.addinivalue_line("markers", "triton: mark test to run with triton backend")
 
     # Per-optimizer marks (e.g., -m adam, -m sgd)

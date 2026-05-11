@@ -19,7 +19,6 @@ from typing import Any
 
 import torch
 from torch import Tensor
-from torch.utils._foreach_utils import _group_tensors_by_device_and_dtype
 
 from optimi.optimizer import OptimiOptimizer
 from optimi.utils import HAS_TRITON, _default_to_triton, _device_guard, _get_triton_block_size, debias_beta
@@ -44,10 +43,9 @@ class Adam(OptimiOptimizer):
         kahan_sum: Enables Kahan summation for more accurate parameter updates when training in low
             precision (float16 or bfloat16). If unspecified, automatically applies for low precision
             parameters (default: None)
-        foreach: Enables the foreach implementation. If unspecified, tries to use foreach over
-            for-loop implementation since it can be significantly faster (default: None)
+        foreach: Removed; True raises ValueError
         triton: Enables Triton implementation. If unspecified, tries to use Triton as it is
-            significantly faster than both for-loop and foreach implementations (default: None)
+            significantly faster than the for-loop implementation (default: None)
         gradient_release: Fuses optimizer step and zero_grad as part of the parameter's backward
             pass. Requires model hooks created with `register_gradient_release`. Incompatible with
             closure (default: False)
@@ -131,11 +129,14 @@ class Adam(OptimiOptimizer):
             exp_avg_sqs.append(state["exp_avg_sq"])
             kahan_comps.append(state["kahan_comp"])
 
+        if not params:
+            return
+
         if not group["setup"]:
             group["setup"] = True
             group["step"] = torch.tensor(0, dtype=torch.int32)
 
-            if group["triton"] is None and group["foreach"] is None:
+            if group["triton"] is None:
                 group["triton"] = _default_to_triton(params)
 
     @torch.no_grad()
@@ -158,6 +159,8 @@ class Adam(OptimiOptimizer):
             for group in self.param_groups:
                 params, grads, exp_avgs, exp_avg_sqs, kahan_comps = [], [], [], [], []
                 self._init_group(group, params, grads, exp_avgs, exp_avg_sqs, kahan_comps)
+                if not params:
+                    continue
 
                 adam(
                     params=params,
@@ -252,7 +255,7 @@ def adam(
         decouple_lr: Apply fully decoupled weight decay
         max_lr: Maximum scheduled learning rate for `decouple_lr`
         kahan_sum: Enables Kahan summation for low precision parameters
-        foreach: Enables the faster foreach implementation
+        foreach: Removed; True raises ValueError
         triton: Enables the faster Triton implementation
         gradient_release: Fuses optimizer step as part of the parameter's backward pass
         optimizer_accumulation: Accumulate gradients into state during gradient release step
@@ -275,18 +278,17 @@ def adam(
     if kahan_comps is None:
         kahan_comps = [None] * len(params)
 
+    if foreach:
+        raise ValueError("foreach=True is no longer supported. Set foreach=False or use triton=True.")
+
     if gradient_release:
         if triton:
             func = _single_param_triton_adam
-        elif foreach:
-            raise ValueError(f"Gradient release {gradient_release=} and foreach {foreach=} cannot be used together")
         else:
             func = _single_param_adam
     else:
         if triton:
             func = _triton_adam
-        elif foreach:
-            func = _foreach_adam
         else:
             func = _single_adam
 
@@ -394,63 +396,6 @@ def _single_param_adam(
         else:
             # Adam step
             param.addcdiv_(exp_avg, exp_avg_sq.sqrt().add_(eps), value=-lr)
-
-
-def _foreach_adam(
-    params: list[Tensor],
-    grads: list[Tensor],
-    exp_avgs: list[Tensor],
-    exp_avg_sqs: list[Tensor],
-    kahan_comps: list[Tensor | None],
-    *,
-    lr: float,
-    beta1_comp: float,
-    beta2_hat: float,
-    beta2_comp: float,
-    weight_decay: float,
-    eps: float,
-    decouple_wd: bool,
-    kahan_sum: bool = False,
-    **kwargs,
-):
-    grouped_tensors = _group_tensors_by_device_and_dtype([params, grads, exp_avgs, exp_avg_sqs, kahan_comps])
-    for (_, dtype), (
-        (dev_params, dev_grads, dev_exp_avgs, dev_exp_avg_sqs, dev_kahan_comps),
-        _,
-    ) in grouped_tensors.items():
-        do_kahan_sum = kahan_sum and dtype in [torch.float16, torch.bfloat16]
-
-        # decoupled weight decay, fully decoupled weight decay, or L2 weight decay
-        if weight_decay != 0:
-            if decouple_wd:
-                torch._foreach_mul_(dev_params, scalar=weight_decay)
-            else:
-                torch._foreach_add_(dev_grads, dev_params, alpha=weight_decay)
-
-        # update gradient moving averages with debiased betas
-        torch._foreach_lerp_(dev_exp_avgs, dev_grads, weight=beta1_comp)
-        torch._foreach_mul_(dev_exp_avg_sqs, scalar=beta2_hat)
-        torch._foreach_addcmul_(dev_exp_avg_sqs, dev_grads, dev_grads, value=beta2_comp)
-
-        # Adam denominator using dev_grads as a temp buffer
-        torch._foreach_copy_(dev_grads, dev_exp_avg_sqs)
-        torch._foreach_sqrt_(dev_grads)
-        torch._foreach_add_(dev_grads, eps)
-
-        if do_kahan_sum:
-            # Adam step
-            torch._foreach_addcdiv_(dev_kahan_comps, dev_exp_avgs, dev_grads, value=-lr)
-
-            # update weights with kahan compensation using dev_grads as temp buffer
-            torch._foreach_copy_(dev_grads, dev_params)
-            torch._foreach_add_(dev_params, dev_kahan_comps, alpha=1)
-
-            # save error back to kahan compensation for next iteration
-            torch._foreach_sub_(dev_grads, dev_params, alpha=1)
-            torch._foreach_add_(dev_kahan_comps, dev_grads, alpha=1)
-        else:
-            # Adam step
-            torch._foreach_addcdiv_(dev_params, dev_exp_avgs, dev_grads, value=-lr)
 
 
 if HAS_TRITON:

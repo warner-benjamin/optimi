@@ -188,7 +188,6 @@ def setup(
     model_name: str,
     optimizer: Optimizer,
     weight_decay: float,
-    foreach: bool,
     fused: bool,
     triton: bool,
     compiled: bool,
@@ -205,7 +204,6 @@ def setup(
     # Select optimizer
     optimizer_class = optimizer.optimizer_class
     optimizer_params = {
-        "foreach": foreach,
         "fused": fused,
         "triton": triton,
         "weight_decay": weight_decay,
@@ -213,10 +211,9 @@ def setup(
         "kahan_sum": kahan_sum,
     }
 
-    # disable fused/foreach for torch.optim when compiling torch optimizers
+    # disable fused for torch.optim when compiling torch optimizers
     if compiled and can_compile(optimizer_class):
         optimizer_params["fused"] = None
-        optimizer_params["foreach"] = None
     elif compiled:
         raise ValueError(f"Only PyTorch optimizers can be compiled with torch.compile. Selected optimizer: {optimizer.value}")
 
@@ -246,7 +243,6 @@ def run_benchmark(
     device: str | None = None,
     num_steps: int = 100,
     weight_decay: float = 0.0,
-    foreach: bool = False,
     fused: bool = False,
     compiled: bool = False,
     gradient_release: bool = False,
@@ -264,8 +260,6 @@ def run_benchmark(
     # Determine backend name
     suffix = " compiled" if compiled else ""
     active_backends = []
-    if foreach:
-        active_backends.append("foreach")
     if fused:
         active_backends.append("fused")
     if triton:
@@ -306,7 +300,6 @@ def run_benchmark(
         model_name=model_name,
         optimizer=optimizer,
         weight_decay=weight_decay,
-        foreach=foreach,
         fused=fused,
         compiled=compiled,
         triton=triton,
@@ -410,7 +403,6 @@ def individual_optimizer(
     precision: Annotated[Precision, Option(help="Precision to benchmark. Use fp32 for AMP, bf16 for low precision")] = Precision.fp32,
     num_steps: Annotated[int, Option(help="Number of optimization steps to benchmark")] = 100,
     weight_decay: Annotated[float, Option(help="Weight decay")] = 1e-2,
-    foreach: Annotated[bool, Option(help="Use foreach implementation")] = False,
     fused: Annotated[bool, Option(help="Use fused implementation. Only valid for PyTorch optimizers")] = False,
     triton: Annotated[bool, Option(help="Use triton implementation. Only valid for optimi optimizers")] = False,
     compiled: Annotated[bool, Option(help="Use torch compile implementation. Only valid for PyTorch optimizers")] = False,
@@ -432,7 +424,6 @@ def individual_optimizer(
             precision=precision,
             num_steps=num_steps,
             weight_decay=weight_decay,
-            foreach=foreach,
             fused=fused,
             compiled=compiled,
             gradient_release=gradient_release,
@@ -446,7 +437,7 @@ def individual_optimizer(
         )
 
 
-@app.command(help="Benchmark multiple models and optimizers across foreach, fused, compiled, and triton backends.")
+@app.command(help="Benchmark multiple models and optimizers across fused, compiled, and triton backends.")
 def benchmark_optimizers(
     models: Annotated[list[str], Option(help="Causal or masked language models from Hugging Face transformers")] = ["answerdotai/ModernBERT-base", "Qwen/Qwen3-0.6B", "allenai/OLMo-2-0425-1B"],
     optimizers: Annotated[list[Optimizer], Option(help="Optimizers to benchmark")] = [Optimizer.torch_adamw, Optimizer.adamw],
@@ -484,7 +475,6 @@ def benchmark_optimizers(
                 supported_compile = can_compile(optimizer_choice.optimizer_class)
                 supported = optimizer_choice.init_params
                 domains = {
-                    "foreach": [False, True] if "foreach" in supported else [False],
                     "fused": [False, True] if "fused" in supported else [False],
                     "triton": [False, True] if "triton" in supported else [False],
                     "compiled": [False, True] if supported_compile else [False],
@@ -512,7 +502,6 @@ def benchmark_optimizers(
                         precision=precision,
                         num_steps=num_steps,
                         weight_decay=weight_decay,
-                        foreach=flags["foreach"],
                         fused=flags["fused"],
                         gradient_release=gradient_release,
                         triton=flags["triton"],

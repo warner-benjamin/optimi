@@ -36,10 +36,9 @@ class AdamW(Adam):
         kahan_sum: Enables Kahan summation for more accurate parameter updates when training in low
             precision (float16 or bfloat16). If unspecified, automatically applies for low precision
             parameters (default: None)
-        foreach: Enables the foreach implementation. If unspecified, tries to use foreach over
-            for-loop implementation since it can be significantly faster (default: None)
+        foreach: Removed; True raises ValueError
         triton: Enables Triton implementation. If unspecified, tries to use Triton as it is
-            significantly faster than both for-loop and foreach implementations (default: None)
+            significantly faster than the for-loop implementation (default: None)
         gradient_release: Fuses optimizer step and zero_grad as part of the parameter's backward
             pass. Requires model hooks created with `register_gradient_release`. Incompatible with
             closure (default: False)
@@ -115,7 +114,7 @@ def adamw(
         decouple_lr: Apply fully decoupled weight decay
         max_lr: Maximum scheduled learning rate for `decouple_lr`
         kahan_sum: Enables Kahan summation for low precision `params`
-        foreach: Enables the faster foreach implementation
+        foreach: Removed; True raises ValueError
         triton: Enables the faster Triton implementation
         gradient_release: Fuses optimizer step as part of the parameter's backward pass
         optimizer_accumulation: Accumulate gradients into state during gradient release step

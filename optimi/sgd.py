@@ -23,7 +23,6 @@ from typing import Any
 
 import torch
 from torch import Tensor
-from torch.utils._foreach_utils import _group_tensors_by_device_and_dtype
 
 from optimi.optimizer import OptimiOptimizer
 from optimi.utils import HAS_TRITON, _default_to_triton, _device_guard, _get_triton_block_size
@@ -51,10 +50,9 @@ class SGD(OptimiOptimizer):
         kahan_sum: Enables Kahan summation for more accurate parameter updates when training in low
             precision (float16 or bfloat16). If unspecified, automatically applies for low precision
             parameters (default: None)
-        foreach: Enables the foreach implementation. If unspecified, tries to use foreach over
-            for-loop implementation since it can be significantly faster (default: None)
+        foreach: Removed; True raises ValueError
         triton: Enables Triton implementation. If unspecified, tries to use Triton as it is
-            significantly faster than both for-loop and foreach implementations (default: None)
+            significantly faster than the for-loop implementation (default: None)
         gradient_release: Fuses optimizer step and zero_grad as part of the parameter's backward
             pass. Requires model hooks created with `register_gradient_release`. Incompatible with
             closure (default: False)
@@ -139,10 +137,13 @@ class SGD(OptimiOptimizer):
             exp_avgs.append(state["exp_avg"])
             kahan_comps.append(state["kahan_comp"])
 
+        if not params:
+            return
+
         if not group["setup"]:
             group["setup"] = True
 
-            if group["triton"] is None and group["foreach"] is None:
+            if group["triton"] is None:
                 group["triton"] = _default_to_triton(params)
 
     @torch.no_grad()
@@ -165,6 +166,8 @@ class SGD(OptimiOptimizer):
             for group in self.param_groups:
                 params, grads, exp_avgs, kahan_comps = [], [], [], []
                 self._init_group(group, params, grads, exp_avgs, kahan_comps)
+                if not params:
+                    continue
 
                 sgd(
                     params=params,
@@ -247,7 +250,7 @@ def sgd(
         decouple_lr: Apply fully decoupled weight decay
         max_lr: Maximum scheduled learning rate for `decouple_lr`
         kahan_sum: Enables Kahan summation for low precision `params`
-        foreach: Enables the faster foreach implementation
+        foreach: Removed; True raises ValueError
         triton: Enables the faster Triton implementation
         gradient_release: Fuses optimizer step as part of the parameter's backward pass
         optimizer_accumulation: Accumulate gradients into state during gradient release step
@@ -262,18 +265,17 @@ def sgd(
     if kahan_comps is None:
         kahan_comps = [None] * len(params)
 
+    if foreach:
+        raise ValueError("foreach=True is no longer supported. Set foreach=False or use triton=True.")
+
     if gradient_release:
         if triton:
             func = _single_param_triton_sgd
-        elif foreach:
-            raise ValueError(f"Gradient release {gradient_release=} and foreach {foreach=} cannot be used together")
         else:
             func = _single_param_sgd
     else:
         if triton:
             func = _triton_sgd
-        elif foreach:
-            func = _foreach_sgd
         else:
             func = _single_sgd
 
@@ -370,55 +372,6 @@ def _single_param_sgd(
         else:
             # SGD step (regular step exp_agv = grad)
             param.add_(exp_avg, alpha=-lr)
-
-
-def _foreach_sgd(
-    params: list[Tensor],
-    grads: list[Tensor],
-    exp_avgs: list[Tensor | None],
-    kahan_comps: list[Tensor | None],
-    *,
-    lr: float,
-    momentum: float,
-    weight_decay: float,
-    dampening: bool,
-    decouple_wd: bool,
-    kahan_sum: bool = False,
-    **kwargs,
-):
-    grouped_tensors = _group_tensors_by_device_and_dtype([params, grads, exp_avgs, kahan_comps])
-    for (_, dtype), ((dev_params, dev_grads, dev_exp_avgs, dev_kahan_comps), _) in grouped_tensors.items():
-        # decoupled weight decay, fully decoupled weight decay, or L2 weight decay
-        if weight_decay != 0:
-            if decouple_wd:
-                torch._foreach_mul_(dev_params, scalar=weight_decay)
-            else:
-                torch._foreach_add_(dev_grads, dev_params, alpha=weight_decay)
-
-        if momentum != 0:
-            # SGD with Momentum
-            if dampening:
-                torch._foreach_lerp_(dev_exp_avgs, dev_grads, weight=1 - momentum)
-            else:
-                torch._foreach_mul_(dev_exp_avgs, scalar=momentum)
-                torch._foreach_add_(dev_exp_avgs, dev_grads, alpha=1)
-        else:
-            dev_exp_avgs = dev_grads
-
-        if kahan_sum and dtype in [torch.float16, torch.bfloat16]:
-            # SGD step (regular step exp_agv = grad)
-            torch._foreach_add_(dev_kahan_comps, dev_exp_avgs, alpha=-lr)
-
-            # update weights with kahan compensation using dev_grads as temp buffer
-            torch._foreach_copy_(dev_grads, dev_params)
-            torch._foreach_add_(dev_params, dev_kahan_comps, alpha=1)
-
-            # save error back to kahan compensation for next iteration
-            torch._foreach_sub_(dev_grads, dev_params, alpha=1)
-            torch._foreach_add_(dev_kahan_comps, dev_grads, alpha=1)
-        else:
-            # SGD step (regular step exp_agv = grad)
-            torch._foreach_add_(dev_params, dev_exp_avgs, alpha=-lr)
 
 
 if HAS_TRITON:

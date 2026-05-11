@@ -22,20 +22,13 @@ class OptimiOptimizer(Optimizer):
         if defaults["max_lr"] is not None and not 0.0 <= defaults["max_lr"]:
             raise ValueError(f"Invalid maximum learning rate: max_lr={defaults['max_lr']}")
 
+        if defaults["foreach"]:
+            raise ValueError("foreach=True is no longer supported. Set foreach=False or use triton=True.")
+        defaults["foreach"] = False
+
         if not MIN_TORCH_2_1:
-            if defaults["foreach"]:
-                raise ValueError(f"foreach={defaults['foreach']} requires PyTorch 2.1 or later. Set foreach=False or upgrade PyTorch.")
-            else:
-                defaults["foreach"] = False
             if defaults["gradient_release"]:
                 raise ValueError(f"gradient_release={defaults['gradient_release']} requires PyTorch 2.1 or later. Upgrade PyTorch to use.")
-
-        if defaults["foreach"]:
-            warn(
-                "Parameter `foreach` is deprecated in favor of the faster `triton` implementation and will be removed in a future release."
-                " Set `foreach=False` to silence this warning.",
-                category=DeprecationWarning,
-            )
 
         if not MIN_TORCH_2_6 and defaults.get("triton", False):
             raise ValueError(f"triton={defaults['triton']} requires PyTorch 2.6 or later. Set triton=False or upgrade PyTorch.")
@@ -43,6 +36,11 @@ class OptimiOptimizer(Optimizer):
             raise ImportError("Triton could not be imported on this system. Set triton=False or install Triton.")
 
         super().__init__(params, defaults)
+
+        for group in self.param_groups:
+            if group["foreach"]:
+                raise ValueError("foreach=True is no longer supported. Set foreach=False or use triton=True.")
+            group["foreach"] = False
 
         # Warn if any parameter group uses a potentially high weight decay when fully
         # decoupling LR from weight decay (decouple_lr=True). Aggregate and warn once.
@@ -61,13 +59,8 @@ class OptimiOptimizer(Optimizer):
         # by default perform the normal parameter update step
         self._optimizer_accumulation = False
 
-        # if gradient_release is enabled, disable foreach step so normal optimizer step won't error
         if self.defaults["gradient_release"]:
-            if self.defaults["foreach"]:
-                warn("Gradient release (gradient_release=True) and foreach (foreach=True) cannot be used together. Disabling foreach.", category=UserWarning)  # fmt: skip  # noqa: E501
-            self.defaults["foreach"] = False
             for group in self.param_groups:
-                group["foreach"] = False
                 for p in group["params"]:
                     self.state[p]["group"] = group
 

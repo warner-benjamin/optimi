@@ -41,7 +41,6 @@ class DeviceType(Enum):
 class Backend(Enum):
     torch = "torch"
     triton = "triton"
-    foreach = "foreach"
 
     def is_supported(self, device: DeviceType) -> bool:
         if self == Backend.triton:
@@ -56,18 +55,6 @@ class Backend(Enum):
                 return False
             # Triton requires GPU/XPU
             if not (torch.cuda.is_available() or (hasattr(torch, "xpu") and torch.xpu.is_available())):
-                return False
-        if self == Backend.foreach:
-            # skip foreach on CPU
-            if device == DeviceType.cpu:
-                return False
-            # forach has limited support on MPS/XPU
-            if (hasattr(torch.backends, "mps") and torch.backends.mps.is_available()) or (
-                hasattr(torch, "xpu") and torch.xpu.is_available()
-            ):
-                return False
-            # foreach wors best on CUDA devices
-            if not torch.cuda.is_available():
                 return False
         return True
 
@@ -242,9 +229,6 @@ class OptTest:
             elif backend == Backend.torch:
                 kw["triton"] = False
                 kw["foreach"] = False
-            elif backend == Backend.foreach:
-                kw["triton"] = False
-                kw["foreach"] = True
             else:
                 raise ValueError(f"Unknown backend: {backend}")
         return kw

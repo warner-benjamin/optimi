@@ -92,7 +92,6 @@ nav:
   - Fully Decoupled Weight Decay: fully_decoupled_weight_decay.md
   - Gradient Release: gradient_release.md
   - Optimizer Accumulation: optimizer_accumulation.md
-  - ForEach Optimizers: foreach.md
   - Which Optimizer?: which_optimizer.md
   - Optimizers:
     - Adam: optimizers/adam.md

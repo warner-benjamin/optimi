@@ -9,7 +9,6 @@ from typing import Any
 import torch
 from packaging.version import parse
 from torch import nn
-from torch.utils._foreach_utils import _foreach_supported_types
 
 try:
     import triton  # noqa: F401
@@ -188,16 +187,13 @@ def _triton_kernels_supported_device(tensor: torch.Tensor):
         return False
 
 
-# modified from PyTorch's _default_to_fused_or_foreach
+# modified from PyTorch's fused/foreach defaulting rules
 # Copyright 2013-present PyTorch contributors, PyTorch BSD-style license
 def _default_to_triton(params: list[torch.Tensor]) -> tuple[bool, bool]:
     if torch.jit.is_scripting():
         return False
 
-    triton = HAS_TRITON and all(
-        p is None or (type(p) in _foreach_supported_types and _triton_kernels_supported_device(p) and torch.is_floating_point(p))
-        for p in params
-    )
+    triton = HAS_TRITON and all(p is None or (_triton_kernels_supported_device(p) and torch.is_floating_point(p)) for p in params)
     return triton
 
 

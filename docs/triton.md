@@ -8,7 +8,7 @@ optimi's vertically fused Triton optimizers are faster than PyTorch's fused Cuda
 
 ![](https://ghp-cdn.benjaminwarner.dev/optimi/adamw_speed.png)
 
-If unspecified `triton=None` and `foreach=None`, optimi will use the Triton implementation by default if training on a modern NVIDIA, AMD, or Intel GPU[^2].
+If unspecified `triton=None`, optimi will use the Triton implementation by default if training on a modern NVIDIA, AMD, or Intel GPU[^2].
 
 ??? note "Note: Triton Optimizers Requires PyTorch 2.6+"
 
