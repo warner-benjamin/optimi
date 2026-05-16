@@ -1,6 +1,12 @@
 # Copyright (c) 2023-present Benjamin Warner
 # SPDX-License-Identifier: MIT
 
+# Implementation of FlashOptim: Optimizers for Memory-Efficient Training
+# FlashOptim - Apache-2.0 - Copyright 2026 Databricks, Inc.
+
+# Stochastic rounding based on Heavyball
+# Heavyball - BSD 2-Clause License - Copyright 2022, Lucas Nestler
+
 from enum import Enum
 
 import torch

@@ -1,6 +1,9 @@
 # Copyright (c) 2023-present Benjamin Warner
 # SPDX-License-Identifier: MIT
 
+# Implementation of FlashOptim: Optimizers for Memory-Efficient Training
+# FlashOptim - Apache-2.0 - Copyright 2026 Databricks, Inc.
+
 import torch
 from torch import Tensor
 from torch.optim.optimizer import Optimizer
