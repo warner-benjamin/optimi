@@ -29,12 +29,12 @@ class LaProp(OptimiOptimizer):
     Args:
         params: Iterable of parameters to optimize or dicts defining parameter groups
         lr: Learning rate
-        betas: Coefficients for gradient and squared gradient moving averages (default: (0.9, 0.999))
-        weight_decay: Weight decay coefficient. If `decouple_wd` and `decouple_lr` are False,
-            applies L2 penalty (default: 0)
+        betas: Coefficients for gradient and squared gradient moving averages (default: (0.9, 0.99))
+        weight_decay: Weight decay coefficient. If `decouple_lr` is False, applies decoupled
+            weight decay (default: 0)
         eps: Added to denominator to improve numerical stability (default: 1e-6)
-        decouple_wd: Apply decoupled weight decay instead of L2 penalty (default: False)
-        decouple_lr: Apply fully decoupled weight decay instead of L2 penalty (default: False)
+        decouple_lr: Apply fully decoupled weight decay instead of decoupled weight decay
+            (default: False)
         max_lr: Maximum scheduled learning rate. Set if `lr` is not the maximum scheduled learning
             rate and `decouple_lr` is True (default: None)
         adam_wd: Apply weight decay before parameter update (Adam-style), instead of after
@@ -397,7 +397,7 @@ def _single_param_laprop(
             param.add_(exp_avg, alpha=-lr)
 
         # LaProp-style decoupled weight decay or L2 weight decay
-        if weight_decay != 0:
+        if not adam_wd and weight_decay != 0:
             param.add_(param, alpha=weight_decay)
 
 
@@ -475,7 +475,7 @@ if HAS_TRITON:
                 param = param + tl.cast((-lr * exp_avg), param.dtype)
 
             # LaProp-style decoupled weight decay or L2 weight decay
-            if do_weight_decay:
+            if not adam_wd and do_weight_decay:
                 param = tl.cast(param + param * weight_decay, param.dtype)
 
             # Store updated parameters
