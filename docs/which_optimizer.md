@@ -36,6 +36,10 @@ Prior to Adam and AdamW, SGD was the default optimizer for deep learning. SGD wi
 
 [Ranger](optimizers/ranger.md) can outperform AdamW when training or finetuning on small batch sizes (~512 or less) with convolutional neural networks. It does use one more buffer then AdamW. Ranger performs best with a flat learning rate followed by a short learning rate decay.
 
+## Reinforcement Learning
+
+[LaProp](optimizers/laprop.md) can outperform Adam in reinforcement learning. LaProp's gradient normalization can increase stability as evolving policies and value estimates change the training distribution and gradients.
+
 [^1]: Or BFloat16 with embedding and RoPE layers in Float32.
 
 [^2]: This setting is [mentioned](https://twitter.com/giffmana/status/1692641748445438301) in [*Sigmoid Loss for Language Image Pre-Training*](https://arxiv.org/abs/2303.15343), although it is common knowledge in parts of the deep learning community.

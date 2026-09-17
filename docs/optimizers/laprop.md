@@ -4,7 +4,7 @@ title: "LaProp: Separating Momentum and Adaptivity in Adam"
 
 # LaProp: Separating Momentum and Adaptivity in Adam
 
-LaProp modifies [Adam](adam.md) by normalizing the gradient by the debiased second moment before computing the first moment, separating momentum from adaptivity. LaProp also uses a learning-rate-aware bias correction for the first moment, so that momentum accumulated at a higher learning rate retains proportionally larger influence when the learning rate decays.
+LaProp modifies [Adam](adam.md) by normalizing the gradient by the square root of the debiased second moment before computing the first moment. This prevents changes in the second moment from rescaling the previously accumulated first moment, improving robustness to sudden changes in gradients. LaProp also weights contributions to the first moment by their learning rates, so gradients accumulated at higher learning rates retain more influence relative to newer gradients as the learning rate decays.
 
 LaProp was introduced by Liu et al in [*LaProp: a Better Way to Combine Momentum with Adaptive Gradient*](https://arxiv.org/abs/2002.04839).
 
@@ -14,9 +14,9 @@ optimi sets the default $\beta$s to `(0.9, 0.99)` and default $\epsilon$ to `1e-
 
 If training on large batch sizes or observing training loss spikes, consider reducing $\beta_2$ between $[0.95, 0.99)$.
 
-By default, LaProp applies decoupled weight decay after the parameter update. Set `adam_wd=True` to apply weight decay before the update (Adam-style).
+By default, LaProp applies decoupled weight decay after the parameter update. Set `adam_wd=True` to apply weight decay before the update (AdamW-style).
 
-optimi's implementation of LaProp also supports [fully decoupled weight decay](../fully_decoupled_weight_decay.md) `decouple_lr=True`. The default weight decay of 0.01 will likely [need to be reduced](../fully_decoupled_weight_decay.md#hyperparameters) when using fully decoupled weight decay as the learning rate will not modify the effective weight decay.
+optimi's implementation of LaProp also supports [fully decoupled weight decay](../fully_decoupled_weight_decay.md) `decouple_lr=True`. Remember that weight decay will likely [need to be reduced](../fully_decoupled_weight_decay.md#hyperparameters) when using fully decoupled weight decay as the learning rate will not modify the effective weight decay.
 
 ::: optimi.laprop.LaProp
 
