@@ -146,6 +146,9 @@ class Adan(OptimiOptimizer):
             prev_grads.append(state["prev_grad"])
             kahan_comps.append(state["kahan_comp"])
 
+        if not params:
+            return
+
         if not group["setup"]:
             group["setup"] = True
             group["step"] = torch.tensor(0, dtype=torch.int32)
@@ -177,6 +180,9 @@ class Adan(OptimiOptimizer):
                 params, grads, exp_avgs, exp_avg_diffs, exp_avg_sqs = [], [], [], [], []
                 prev_grads, kahan_comps = [], []
                 self._init_group(group, params, grads, exp_avgs, exp_avg_diffs, exp_avg_sqs, prev_grads, kahan_comps)
+
+                if not params:
+                    continue
 
                 adan(
                     params=params,

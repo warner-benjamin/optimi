@@ -139,6 +139,9 @@ class SGD(OptimiOptimizer):
             exp_avgs.append(state["exp_avg"])
             kahan_comps.append(state["kahan_comp"])
 
+        if not params:
+            return
+
         if not group["setup"]:
             group["setup"] = True
 
@@ -165,6 +168,9 @@ class SGD(OptimiOptimizer):
             for group in self.param_groups:
                 params, grads, exp_avgs, kahan_comps = [], [], [], []
                 self._init_group(group, params, grads, exp_avgs, kahan_comps)
+
+                if not params:
+                    continue
 
                 sgd(
                     params=params,

@@ -143,6 +143,16 @@ class StableAdamW(OptimiOptimizer):
         kahan_comps: list[Tensor],
         mean_squares: list[Tensor],
     ):
+        for p in group["params"]:
+            if p.grad is None:
+                continue
+
+            params.append(p)
+            grads.append(p.grad)
+
+        if not params:
+            return
+
         if not group["setup"]:
             group["setup"] = True
             group["step"] = torch.tensor(0, dtype=torch.int32)
@@ -150,12 +160,7 @@ class StableAdamW(OptimiOptimizer):
             if group["triton"] is None and group["foreach"] is None:
                 group["triton"] = _default_to_triton(params)
 
-        for p in group["params"]:
-            if p.grad is None:
-                continue
-
-            params.append(p)
-            grads.append(p.grad)
+        for p in params:
             state = self.state[p]
 
             self._init_state(group, state, p)
@@ -197,6 +202,9 @@ class StableAdamW(OptimiOptimizer):
                     kahan_comps=kahan_comps,
                     mean_squares=mean_squares,
                 )
+
+                if not params:
+                    continue
 
                 stableadamw(
                     params=params,

@@ -141,6 +141,9 @@ class Ranger(OptimiOptimizer):
             la_params.append(state["la_param"])
             kahan_comps.append(state["kahan_comp"])
 
+        if not params:
+            return
+
         if not group["setup"]:
             group["setup"] = True
             group["step"] = torch.tensor(0, dtype=torch.int32)
@@ -168,6 +171,9 @@ class Ranger(OptimiOptimizer):
             for group in self.param_groups:
                 params, grads, exp_avgs, exp_avg_sqs, la_params, kahan_comps = [], [], [], [], [], []
                 self._init_group(group, params, grads, exp_avgs, exp_avg_sqs, la_params, kahan_comps)
+
+                if not params:
+                    continue
 
                 ranger(
                     params=params,
