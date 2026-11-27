@@ -6,7 +6,7 @@ readme = "README.md"
 requires-python = ">=3.10"
 license = { file = "LICENSE" }
 keywords = ["Optimizers", "PyTorch", "Deep Learning", "AI"]
-version = "0.3.3"
+version = "0.3.4"
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
@@ -16,6 +16,7 @@ classifiers = [
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Programming Language :: Python :: 3.14",
+    "Programming Language :: Python :: 3.15",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
 dependencies = ["torch>=2.2"]
@@ -23,11 +24,18 @@ dependencies = ["torch>=2.2"]
 [dependency-groups]
 cpu = ["torch>=2.2"]
 cu121 = ["torch>=2.2,<2.6"]
-cu124 = ["torch>=2.4"]
-cu128 = ["torch>=2.7"]
-cu130 = ["torch>=2.9"]
-rocm = ["torch>=2.7", "pytorch-triton-rocm>=3.3.0"]
-xpu = ["torch>=2.7.1", "pytorch-triton-xpu>=3.3.0"]
+cu124 = ["torch>=2.4,<2.7"]
+cu126 = ["torch>=2.6,<2.15"]
+cu128 = ["torch>=2.7,<2.12"]
+cu129 = ["torch>=2.8,<2.14"]
+cu130 = ["torch>=2.9,<2.15"]
+cu132 = ["torch>=2.12"]
+cu134 = ["torch>=2.15"]
+rocm = ["torch>=2.11,<2.15", "triton-rocm"]
+rocm63 = ["torch>=2.7,<2.10", "pytorch-triton-rocm"]
+rocm714 = ["torch>=2.14", "triton-rocm"]
+rocm100 = ["torch>=2.15", "triton-rocm"]
+xpu = ["torch>=2.10", "triton-xpu"]
 
 test = [
     "pytest>=9.0.2",
@@ -102,14 +110,25 @@ pydocstyle.convention = "google"
 "utils.py" = ["I002"]
 
 [tool.uv]
+# Prefer PyPI for shared dependencies and fall back to AMD for the ROCm SDK.
+index-strategy = "unsafe-first-match"
+# Resolve Python 3.11+ first to prefer newer wheels while keeping Python 3.10 support.
+environments = ["python_version >= '3.11'", "python_version < '3.11'"]
 conflicts = [
   [
     { group = "cpu" },
     { group = "cu121" },
     { group = "cu124" },
+    { group = "cu126" },
     { group = "cu128" },
+    { group = "cu129" },
     { group = "cu130" },
+    { group = "cu132" },
+    { group = "cu134" },
     { group = "rocm" },
+    { group = "rocm63" },
+    { group = "rocm714" },
+    { group = "rocm100" },
     { group = "xpu" },
   ],
   [
@@ -120,20 +139,36 @@ conflicts = [
   ],
 ]
 
+[tool.uv.dependency-groups]
+cu134 = { requires-python = ">=3.11" }
+rocm100 = { requires-python = ">=3.11" }
+
 [tool.uv.sources]
 torch = [
   { index = "pytorch-cpu", group = "cpu" },
   { index = "pytorch-cu121", group = "cu121" },
   { index = "pytorch-cu124", group = "cu124" },
+  { index = "pytorch-cu126", group = "cu126" },
   { index = "pytorch-cu128", group = "cu128" },
+  { index = "pytorch-cu129", group = "cu129" },
   { index = "pytorch-cu130", group = "cu130" },
-  { index = "pytorch-rocm", group = "rocm" },
+  { index = "pytorch-cu132", group = "cu132" },
+  { index = "pytorch-cu134", group = "cu134", marker = "python_version >= '3.11'" },
+  { index = "pytorch-rocm72", group = "rocm" },
+  { index = "pytorch-rocm63", group = "rocm63" },
+  { index = "pytorch-rocm714", group = "rocm714" },
+  { index = "pytorch-rocm100", group = "rocm100", marker = "python_version >= '3.11'" },
   { index = "pytorch-xpu", group = "xpu" },
 ]
 pytorch-triton-rocm = [
-  { index = "pytorch-rocm", group = "rocm" },
+  { index = "pytorch-rocm63", group = "rocm63" },
 ]
-pytorch-triton-xpu = [
+triton-rocm = [
+  { index = "pytorch-rocm72", group = "rocm" },
+  { index = "pytorch-rocm714", group = "rocm714" },
+  { index = "pytorch-rocm100", group = "rocm100" },
+]
+triton-xpu = [
   { index = "pytorch-xpu", group = "xpu" },
 ]
 
@@ -153,8 +188,18 @@ url = "https://download.pytorch.org/whl/cu124"
 explicit = true
 
 [[tool.uv.index]]
+name = "pytorch-cu126"
+url = "https://download.pytorch.org/whl/cu126"
+explicit = true
+
+[[tool.uv.index]]
 name = "pytorch-cu128"
 url = "https://download.pytorch.org/whl/cu128"
+explicit = true
+
+[[tool.uv.index]]
+name = "pytorch-cu129"
+url = "https://download.pytorch.org/whl/cu129"
 explicit = true
 
 [[tool.uv.index]]
@@ -163,11 +208,48 @@ url = "https://download.pytorch.org/whl/cu130"
 explicit = true
 
 [[tool.uv.index]]
-name = "pytorch-rocm"
+name = "pytorch-cu132"
+url = "https://download.pytorch.org/whl/cu132"
+explicit = true
+
+[[tool.uv.index]]
+name = "pytorch-cu134"
+url = "https://download.pytorch.org/whl/cu134"
+explicit = true
+
+[[tool.uv.index]]
+name = "pytorch-rocm72"
+url = "https://download.pytorch.org/whl/rocm7.2"
+explicit = true
+
+[[tool.uv.index]]
+name = "pytorch-rocm63"
 url = "https://download.pytorch.org/whl/rocm6.3"
 explicit = true
 
 [[tool.uv.index]]
 name = "pytorch-xpu"
 url = "https://download.pytorch.org/whl/xpu"
+explicit = true
+
+[[tool.uv.index]]
+name = "pypi"
+url = "https://pypi.org/simple"
+
+[[tool.uv.index]]
+name = "amd-rocm-sdk"
+url = "https://stable.repo.amd.com/rocm/core/whl-next/"
+
+[[tool.uv.index]]
+name = "pytorch-rocm100"
+url = "https://download.pytorch.org/whl/rocm10.0"
+explicit = true
+
+[[tool.uv.index]]
+name = "amd-rocm714-sdk"
+url = "https://repo.amd.com/rocm/whl-multi-arch/"
+
+[[tool.uv.index]]
+name = "pytorch-rocm714"
+url = "https://download.pytorch.org/whl/rocm7.14"
 explicit = true

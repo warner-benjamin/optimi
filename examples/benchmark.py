@@ -16,7 +16,7 @@ import torch
 import torch._logging
 import transformers
 import typer
-from optimi import SGD, Adam, AdamW, Adan, Lion, RAdam, Ranger, StableAdamW, param_groups_weight_decay
+from optimi import SGD, Adam, AdamW, Adan, LaProp, Lion, RAdam, Ranger, StableAdamW, param_groups_weight_decay
 from optimi.optimizer import OptimiOptimizer
 from rich.console import Console, Group
 from rich.live import Live
@@ -34,7 +34,7 @@ from rich.progress import (
 )
 from rich.table import Column
 from rich.text import Text
-from transformers import AutoConfig, AutoModelForCausalLM, AutoModelForMaskedLM, PreTrainedModel
+from transformers import AutoConfig, AutoModelForCausalLM, AutoModelForImageClassification, AutoModelForMaskedLM, PreTrainedModel
 from typer import Option
 
 logging.getLogger("torch._logging._internal").setLevel(logging.ERROR)
@@ -118,6 +118,7 @@ class Optimizer(OptimizerEnum):
     adam = ("optimi_adam", Adam)
     adamw = ("optimi_adamw", AdamW)
     adan = ("optimi_adan", Adan)
+    laprop = ("optimi_laprop", LaProp)
     lion = ("optimi_lion", Lion)
     radam = ("optimi_radam", RAdam)
     ranger = ("optimi_ranger", Ranger)
@@ -173,6 +174,8 @@ def load_model(
                     model = AutoModelForCausalLM.from_config(config, trust_remote_code=trust_remote_code, torch_dtype=dtype)
                 elif any("formasked" in arch.lower() for arch in config.architectures):
                     model = AutoModelForMaskedLM.from_config(config, trust_remote_code=trust_remote_code, torch_dtype=dtype)
+                elif any("forimageclassification" in arch.lower() for arch in config.architectures):
+                    model = AutoModelForImageClassification.from_config(config, trust_remote_code=trust_remote_code, torch_dtype=dtype)
                 else:
                     raise ValueError(f"Model {model_name} has unsupported architecture: {config.architectures}")
 
@@ -580,10 +583,9 @@ def estimate_memory(
     total_params = sum(p.numel() for p in model.parameters())
     weights_mem = total_params * bytes_per_param
 
-    # Determine optimizer buffer count
-    # Dynamically determine buffer count using a dummy parameter to trigger actual state slots
-    dummy = torch.nn.Parameter(torch.zeros(64, dtype=dtype, device="cpu", requires_grad=True))
     opt_cls = optimizer.optimizer_class
+    # Dynamically determine buffer count using a dummy parameter to trigger actual state slots.
+    dummy = torch.nn.Parameter(torch.zeros(64, dtype=dtype, device="cpu", requires_grad=True))
     init_params = inspect.signature(opt_cls.__init__).parameters
     opt_kwargs: dict = {}
     if "kahan_sum" in init_params:

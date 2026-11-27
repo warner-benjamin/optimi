@@ -62,6 +62,12 @@ optimi implements the following optimizers:
 optimi is available to install from pypi.
 
 ```bash
+uv add torch-optimi
+```
+
+or via pip:
+
+```bash
 pip install torch-optimi
 ```
 
@@ -172,3 +178,5 @@ remove_gradient_release(model)
 optimi optimizers do not support compilation, differentiation, complex numbers, or have capturable versions.
 
 optimi Adam optimizers do not support AMSGrad and SGD does not support Nesterov momentum. Optimizers which debias updates (Adam optimizers and Adan) calculate the debias term per parameter group, not per parameter.
+
+optimi expects all parameters in a parameter group to be on the same device. If training a model across multiple devices in a single process, create separate parameter groups for each device.

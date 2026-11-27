@@ -224,7 +224,7 @@ class OptTest:
 
     def __post_init__(self):
         if self.reference_params is None:
-            self.reference_params = self.optimi_params
+            self.reference_params = replace(self.optimi_params)
 
     @property
     def optimizer_name(self) -> str:
@@ -236,20 +236,15 @@ class OptTest:
 
     def to_optimi_kwargs(self, backend: Backend | None = None) -> dict[str, Any]:
         # Centralize backend controls so runners don't mutate kwargs later
+        params = self.optimi_params
         if backend is not None:
-            if backend == Backend.triton:
-                self.optimi_params.triton = True
-                self.optimi_params.foreach = False
-            elif backend == Backend.torch:
-                self.optimi_params.triton = False
-                self.optimi_params.foreach = False
-            elif backend == Backend.foreach:
-                self.optimi_params.triton = False
-                self.optimi_params.foreach = True
-            else:
+            if backend not in (Backend.triton, Backend.torch, Backend.foreach):
                 raise ValueError(f"Unknown backend: {backend}")
-
-        return self.optimi_params.to_optimi_kwargs(self.optimi_class)
+            params = params.with_(
+                triton=backend == Backend.triton,
+                foreach=backend == Backend.foreach,
+            )
+        return params.to_optimi_kwargs(self.optimi_class)
 
     def to_reference_kwargs(self, backend: Backend | None = None) -> dict[str, Any]:
         assert self.reference_params is not None

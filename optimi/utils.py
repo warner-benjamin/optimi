@@ -9,7 +9,6 @@ from typing import Any
 import torch
 from packaging.version import parse
 from torch import nn
-from torch.utils._foreach_utils import _foreach_supported_types
 
 try:
     import triton  # noqa: F401
@@ -21,6 +20,7 @@ except ImportError:
 MIN_TORCH_2_1 = parse(torch.__version__) >= parse("2.1")
 MIN_TORCH_2_6 = parse(torch.__version__) >= parse("2.6")
 HAS_TRITON = HAS_TRITON and MIN_TORCH_2_6
+_TRITON_SUPPORTED_TYPES = (torch.Tensor, nn.Parameter)
 
 
 def debias(beta: float, step: int) -> float:
@@ -190,12 +190,12 @@ def _triton_kernels_supported_device(tensor: torch.Tensor):
 
 # modified from PyTorch's _default_to_fused_or_foreach
 # Copyright 2013-present PyTorch contributors, PyTorch BSD-style license
-def _default_to_triton(params: list[torch.Tensor]) -> tuple[bool, bool]:
-    if torch.jit.is_scripting():
+def _default_to_triton(params: list[torch.Tensor]) -> bool:
+    if torch.jit.is_scripting() or not params:
         return False
 
     triton = HAS_TRITON and all(
-        p is None or (type(p) in _foreach_supported_types and _triton_kernels_supported_device(p) and torch.is_floating_point(p))
+        p is None or (type(p) in _TRITON_SUPPORTED_TYPES and _triton_kernels_supported_device(p) and torch.is_floating_point(p))
         for p in params
     )
     return triton
